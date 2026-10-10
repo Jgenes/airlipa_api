@@ -1,0 +1,333 @@
+{
+  "info": {
+    "_postman_id": "c1f7a4b0-64f3-4d7c-87d2-972175a28b61",
+    "name": "Airlipa Secure Production REST API",
+    "description": "Production-grade REST API built in Laravel 11/12 with Sanctum authentication, 2-step OTP verification, NIDA mock KYC for individuals, KYB document verification for businesses, and strict security controls.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000/api/v1"
+    },
+    {
+      "key": "kyc_token",
+      "value": ""
+    },
+    {
+      "key": "auth_token",
+      "value": ""
+    },
+    {
+      "key": "otp_session_token",
+      "value": ""
+    },
+    {
+      "key": "kyc_session_id",
+      "value": "1"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "Register Individual",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Juma\",\n  \"last_name\": \"Hamisi\",\n  \"email\": \"juma.hamisi@example.com\",\n  \"phone\": \"0712345678\",\n  \"account_type\": \"individual\",\n  \"password\": \"SecurePass#2026!\",\n  \"password_confirmation\": \"SecurePass#2026!\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/register", "host": ["{{base_url}}"], "path": ["auth", "register"] }
+          }
+        },
+        {
+          "name": "Register Business",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"Ali\",\n  \"last_name\": \"Bakari\",\n  \"email\": \"ali@company.tz\",\n  \"phone\": \"+255754112233\",\n  \"account_type\": \"business\",\n  \"password\": \"BusinessSecure#2026!\",\n  \"password_confirmation\": \"BusinessSecure#2026!\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/register", "host": ["{{base_url}}"], "path": ["auth", "register"] }
+          }
+        },
+        {
+          "name": "Activate Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"juma.hamisi@example.com\",\n  \"code\": \"123456\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/activate", "host": ["{{base_url}}"], "path": ["auth", "activate"] }
+          }
+        },
+        {
+          "name": "Resend Activation OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifier\": \"juma.hamisi@example.com\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/activation/resend", "host": ["{{base_url}}"], "path": ["auth", "activation", "resend"] }
+          }
+        },
+        {
+          "name": "Login (Step 1 - Credentials)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"juma.hamisi@example.com\",\n  \"password\": \"SecurePass#2026!\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/login", "host": ["{{base_url}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "Verify Login OTP (Step 2 - Token Issue)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"otp_session_token\": \"{{otp_session_token}}\",\n  \"code\": \"654321\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/login/verify-otp", "host": ["{{base_url}}"], "path": ["auth", "login", "verify-otp"] }
+          }
+        },
+        {
+          "name": "Resend Login OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"otp_session_token\": \"{{otp_session_token}}\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/login/resend-otp", "host": ["{{base_url}}"], "path": ["auth", "login", "resend-otp"] }
+          }
+        },
+        {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"juma.hamisi@example.com\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/forgot-password", "host": ["{{base_url}}"], "path": ["auth", "forgot-password"] }
+          }
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"juma.hamisi@example.com\",\n  \"token\": \"sample_token_here\",\n  \"password\": \"NewSecurePass#2026!\",\n  \"password_confirmation\": \"NewSecurePass#2026!\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/auth/reset-password", "host": ["{{base_url}}"], "path": ["auth", "reset-password"] }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/auth/logout", "host": ["{{base_url}}"], "path": ["auth", "logout"] }
+          }
+        },
+        {
+          "name": "Logout All Devices",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/auth/logout-all", "host": ["{{base_url}}"], "path": ["auth", "logout-all"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. KYC (Individual - NIDA)",
+      "item": [
+        {
+          "name": "Initiate NIDA KYC Challenge",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{kyc_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nida_number\": \"19900101123450000001\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/kyc/nida/initiate", "host": ["{{base_url}}"], "path": ["kyc", "nida", "initiate"] }
+          }
+        },
+        {
+          "name": "Verify NIDA KYC Challenge Answers",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{kyc_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kyc_session_id\": 1,\n  \"answers\": [\n    {\n      \"question_key\": \"date_of_birth\",\n      \"answer\": \"1990-01-01\"\n    },\n    {\n      \"question_key\": \"place_of_birth\",\n      \"answer\": \"Dar es Salaam\"\n    },\n    {\n      \"question_key\": \"mother_first_name\",\n      \"answer\": \"Fatuma\"\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{base_url}}/kyc/nida/verify", "host": ["{{base_url}}"], "path": ["kyc", "nida", "verify"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. KYB (Business)",
+      "item": [
+        {
+          "name": "Submit Business KYB Details & Document",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{kyc_token}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "business_name", "value": "Safari Tech Limited", "type": "text" },
+                { "key": "registration_number", "value": "BRELA-987654", "type": "text" },
+                { "key": "tin_number", "value": "123456789", "type": "text" },
+                { "key": "business_type", "value": "Limited Liability Company", "type": "text" },
+                { "key": "date_of_incorporation", "value": "2022-01-15", "type": "text" },
+                { "key": "business_address", "value": "Ali Hassan Mwinyi Rd, Dar es Salaam", "type": "text" },
+                { "key": "region", "value": "Dar es Salaam", "type": "text" },
+                { "key": "district", "value": "Kinondoni", "type": "text" },
+                { "key": "contact_person", "value": "Juma Jux", "type": "text" },
+                { "key": "contact_phone", "value": "+255712345678", "type": "text" },
+                { "key": "contact_email", "value": "info@safaritech.co.tz", "type": "text" },
+                { "key": "registration_document", "type": "file", "src": "" }
+              ]
+            },
+            "url": { "raw": "{{base_url}}/kyb/submit", "host": ["{{base_url}}"], "path": ["kyb", "submit"] }
+          }
+        },
+        {
+          "name": "Download Registration Document (Signed / Owner)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/kyb/document/1", "host": ["{{base_url}}"], "path": ["kyb", "document", "1"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Dashboard & Profile",
+      "item": [
+        {
+          "name": "Get Dashboard Summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/dashboard", "host": ["{{base_url}}"], "path": ["dashboard"] }
+          }
+        },
+        {
+          "name": "Get User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/profile", "host": ["{{base_url}}"], "path": ["profile"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Admin Operations",
+      "item": [
+        {
+          "name": "Admin Approve KYB",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/admin/kyb/1/approve", "host": ["{{base_url}}"], "path": ["admin", "kyb", "1", "approve"] }
+          }
+        },
+        {
+          "name": "Admin Reject KYB",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Registration document scan is blurred and missing official BRELA seal.\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/admin/kyb/1/reject", "host": ["{{base_url}}"], "path": ["admin", "kyb", "1", "reject"] }
+          }
+        }
+      ]
+    }
+  ]
+}
