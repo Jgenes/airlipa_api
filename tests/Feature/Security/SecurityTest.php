@@ -9,7 +9,9 @@ use Laravel\Sanctum\Sanctum;
 uses(RefreshDatabase::class);
 
 test('security headers middleware attaches all required security headers', function () {
-    $response = $this->getJson('/api/v1/auth/forgot-password');
+    $response = $this->postJson('/api/v1/auth/forgot-password', [
+        'email' => 'test@example.com',
+    ]);
 
     $response->assertHeader('X-Content-Type-Options', 'nosniff')
         ->assertHeader('X-Frame-Options', 'DENY')
