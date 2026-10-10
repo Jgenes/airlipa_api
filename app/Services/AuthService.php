@@ -236,7 +236,8 @@ class AuthService
 
         // Check if locked
         if ($user->isLocked()) {
-            $retryAfter = (int) $user->locked_until->diffInSeconds(now());
+            // Carbon 3: diffInSeconds() is signed — base it on now() so a future lock expiry yields positive seconds
+            $retryAfter = max(0, (int) now()->diffInSeconds($user->locked_until));
             AuditLogService::log('login_blocked_locked', $user, ['retry_after' => $retryAfter]);
             return [
                 'success' => false,

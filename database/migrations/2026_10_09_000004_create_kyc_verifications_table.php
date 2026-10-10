@@ -15,7 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->text('nida_number'); // encrypted cast in Laravel
-            $table->string('nida_hash', 64)->unique(); // blind index sha256 to ensure one NIDA links to one user
+            $table->string('nida_hash', 64)->index(); // blind index sha256 — "one NIDA links to one user" is enforced in KycService (only for Verified rows), while the lockout flow requires multiple rows per NIDA
             $table->json('questions_asked');
             $table->string('status', 30)->default('Pending');
             $table->unsignedInteger('attempts')->default(0);
