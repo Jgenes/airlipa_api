@@ -47,12 +47,13 @@ class KycService
             return null;
         }
 
-        $unlockTime = $latestFailed->updated_at->addHours($lockoutHours);
+        $unlockTime = $latestFailed->updated_at->copy()->addHours($lockoutHours);
         if ($unlockTime->isPast()) {
             return null;
         }
 
-        return (int) $unlockTime->diffInSeconds(now());
+        // Carbon 3: diffInSeconds() is signed — base it on now() so the future unlock time yields positive seconds
+        return max(0, (int) now()->diffInSeconds($unlockTime));
     }
 
     /**
