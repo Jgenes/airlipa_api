@@ -20,7 +20,9 @@ class ActivationOtpMail extends Mailable implements ShouldQueue
         public User $user,
         public string $code,
         public int $expiryMinutes = 10
-    ) {}
+    ) {
+        $this->onConnection(config('auth_otp.mail.queue_connection', 'sync'));
+    }
 
     public function envelope(): Envelope
     {

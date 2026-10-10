@@ -19,7 +19,9 @@ class PasswordResetMail extends Mailable implements ShouldQueue
     public function __construct(
         public User $user,
         public string $token
-    ) {}
+    ) {
+        $this->onConnection(config('auth_otp.mail.queue_connection', 'sync'));
+    }
 
     public function envelope(): Envelope
     {

@@ -210,8 +210,24 @@ class OtpService
             } else {
                 Mail::to($user->email)->queue(new LoginOtpMail($user, $code, $expiryMinutes));
             }
+
+            if (in_array(config('mail.default'), ['log', 'array'], true)) {
+                Log::info('[EMAIL LOG DRIVER] OTP email dispatched', [
+                    'to' => $user->email,
+                    'purpose' => $purpose->value,
+                    'code' => $code,
+                    'expires_in_minutes' => $expiryMinutes,
+                    'mailer' => config('mail.default'),
+                ]);
+            }
         } catch (\Throwable $e) {
-            Log::error("[OtpService] Failed to queue OTP email: " . $e->getMessage());
+            Log::error('[OtpService] Failed to dispatch OTP email: ' . $e->getMessage(), [
+                'email' => $user->email,
+                'purpose' => $purpose->value,
+                'mailer' => config('mail.default'),
+                'host' => config('mail.mailers.smtp.host'),
+                'port' => config('mail.mailers.smtp.port'),
+            ]);
         }
 
         // 2. SMS

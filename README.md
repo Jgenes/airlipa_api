@@ -122,10 +122,16 @@ DB_PASSWORD=
 # Session & Cache
 SESSION_DRIVER=database
 CACHE_STORE=database
-QUEUE_CONNECTION=database
+QUEUE_CONNECTION=sync
 
-# Email
-MAIL_MAILER=log
+# Email (set MAIL_MAILER=smtp with real credentials to deliver to inbox, or MAIL_MAILER=log to write OTPs to storage/logs/laravel.log)
+MAIL_MAILER=smtp
+MAIL_SCHEME=tls
+MAIL_ENCRYPTION=tls
+MAIL_HOST=smtp.gmail.com
+MAIL_PORT=587
+MAIL_USERNAME=your_email@gmail.com
+MAIL_PASSWORD=your_app_password
 MAIL_FROM_ADDRESS="no-reply@airlipa.com"
 MAIL_FROM_NAME="${APP_NAME}"
 

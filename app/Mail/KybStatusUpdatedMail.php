@@ -21,7 +21,9 @@ class KybStatusUpdatedMail extends Mailable implements ShouldQueue
         public string $businessName,
         public string $status,
         public ?string $reason = null
-    ) {}
+    ) {
+        $this->onConnection(config('auth_otp.mail.queue_connection', 'sync'));
+    }
 
     public function envelope(): Envelope
     {

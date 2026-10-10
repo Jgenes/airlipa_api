@@ -33,7 +33,7 @@ class AuthService
      */
     public function register(array $data): array
     {
-        return DB::transaction(function () use ($data) {
+        $user = DB::transaction(function () use ($data) {
             // Map account_type to UserType enum
             $accountTypeRaw = strtolower((string) ($data['account_type'] ?? 'individual'));
             $userType = $accountTypeRaw === 'business' ? UserType::Business : UserType::Individual;
@@ -56,9 +56,6 @@ class AuthService
             $user->kyb_status = KybStatus::NotStarted;
             $user->save();
 
-            // Generate and send 6-digit activation OTP
-            $this->otpService->generateAndSend($user, OtpPurpose::Activation);
-
             AuditLogService::log(
                 event: 'user_registered',
                 user: $user,
@@ -69,11 +66,16 @@ class AuthService
                 ]
             );
 
-            return [
-                'user' => $user,
-                'next_step' => 'verify_activation',
-            ];
+            return $user;
         });
+
+        // Generate and send 6-digit activation OTP after transaction commits
+        $this->otpService->generateAndSend($user, OtpPurpose::Activation);
+
+        return [
+            'user' => $user,
+            'next_step' => 'verify_activation',
+        ];
     }
 
     /**

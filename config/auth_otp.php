@@ -47,4 +47,8 @@ return [
     'sms' => [
         'default_driver' => env('SMS_DRIVER', 'log'),
     ],
+
+    'mail' => [
+        'queue_connection' => env('AUTH_OTP_MAIL_QUEUE_CONNECTION', 'sync'),
+    ],
 ];
