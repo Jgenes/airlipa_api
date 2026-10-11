@@ -130,7 +130,7 @@ class KybService
         ])->save();
 
         try {
-            Mail::to($profile->user->email)->queue(
+            Mail::to($profile->user->email)->send(
                 new KybStatusUpdatedMail($profile->user, $profile->business_name, 'Verified')
             );
         } catch (\Throwable $e) {
@@ -158,7 +158,7 @@ class KybService
         ])->save();
 
         try {
-            Mail::to($profile->user->email)->queue(
+            Mail::to($profile->user->email)->send(
                 new KybStatusUpdatedMail($profile->user, $profile->business_name, 'Rejected', $reason)
             );
         } catch (\Throwable $e) {

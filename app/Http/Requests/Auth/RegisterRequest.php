@@ -35,9 +35,10 @@ class RegisterRequest extends FormRequest
      */
     public function rules(): array
     {
-        $emailRule = app()->environment('testing')
-            ? ['required', 'string', 'email:rfc', 'max:255', 'unique:users,email']
-            : ['required', 'string', 'email:rfc,dns', 'max:255', 'unique:users,email'];
+        // Syntax-only validation: the `dns` option performs a live MX lookup that
+        // wrongly rejects valid emails when the host cannot resolve the domain
+        // (restricted outbound DNS, local/domestic .co.tz domains, etc.).
+        $emailRule = ['required', 'string', 'email:rfc', 'max:255', 'unique:users,email'];
 
         return [
             'first_name' => ['required', 'string', 'max:50', 'regex:/^[\pL\s\-]+$/u'],

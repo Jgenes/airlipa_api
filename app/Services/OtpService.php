@@ -206,9 +206,9 @@ class OtpService
         // 1. Email
         try {
             if ($purpose === OtpPurpose::Activation) {
-                Mail::to($user->email)->queue(new ActivationOtpMail($user, $code, $expiryMinutes));
+                Mail::to($user->email)->send(new ActivationOtpMail($user, $code, $expiryMinutes));
             } else {
-                Mail::to($user->email)->queue(new LoginOtpMail($user, $code, $expiryMinutes));
+                Mail::to($user->email)->send(new LoginOtpMail($user, $code, $expiryMinutes));
             }
         } catch (\Throwable $e) {
             Log::error("[OtpService] Failed to queue OTP email: " . $e->getMessage());

@@ -549,7 +549,7 @@ class AuthService
             );
 
             try {
-                Mail::to($user->email)->queue(new PasswordResetMail($user, $token));
+                Mail::to($user->email)->send(new PasswordResetMail($user, $token));
             } catch (\Throwable $e) {
                 Log::error('[AuthService] Failed to queue password reset mail: ' . $e->getMessage());
             }
