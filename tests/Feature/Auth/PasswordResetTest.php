@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
-test('forgot password returns generic response and queues email for valid user', function () {
+test('forgot password returns generic response and sends email for valid user', function () {
     Mail::fake();
 
     $user = User::factory()->kycVerified()->create();
@@ -25,7 +25,7 @@ test('forgot password returns generic response and queues email for valid user',
             'message' => 'If your email is registered, you will receive password reset instructions shortly.',
         ]);
 
-    Mail::assertQueued(PasswordResetMail::class);
+    Mail::assertSent(PasswordResetMail::class);
 
     expect(DB::table('password_reset_tokens')->where('email', $user->email)->exists())->toBeTrue();
 });
@@ -42,7 +42,7 @@ test('forgot password returns generic response for non-existent email', function
             'success' => true,
         ]);
 
-    Mail::assertNothingQueued();
+    Mail::assertNothingSent();
 });
 
 test('user can reset password with valid token and all previous tokens are revoked', function () {

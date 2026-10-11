@@ -52,8 +52,8 @@ test('user can register successfully as individual', function () {
     expect($otp)->not->toBeNull()
         ->and($otp->code_hash)->not->toBeEmpty();
 
-    // Verify Mail was queued
-    Mail::assertQueued(ActivationOtpMail::class, function ($mail) use ($user) {
+    // Verify Mail was sent
+    Mail::assertSent(ActivationOtpMail::class, function ($mail) use ($user) {
         return $mail->user->id === $user->id;
     });
 

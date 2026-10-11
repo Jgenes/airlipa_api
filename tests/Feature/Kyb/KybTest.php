@@ -173,7 +173,7 @@ test('admin can approve business KYB and trigger notification', function () {
     $profile->refresh();
     expect($profile->status)->toBe(BusinessProfileStatus::Verified);
 
-    Mail::assertQueued(KybStatusUpdatedMail::class, function ($mail) use ($user) {
+    Mail::assertSent(KybStatusUpdatedMail::class, function ($mail) use ($user) {
         return $mail->user->id === $user->id && $mail->status === 'Verified';
     });
 });
@@ -208,7 +208,7 @@ test('admin can reject business KYB with reason and trigger notification', funct
     expect($profile->status)->toBe(BusinessProfileStatus::Rejected)
         ->and($profile->rejection_reason)->toBe('TIN registration number could not be validated with TRA database.');
 
-    Mail::assertQueued(KybStatusUpdatedMail::class, function ($mail) use ($user) {
+    Mail::assertSent(KybStatusUpdatedMail::class, function ($mail) use ($user) {
         return $mail->user->id === $user->id && $mail->status === 'Rejected';
     });
 });

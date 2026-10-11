@@ -112,7 +112,7 @@ test('verified individual login dispatches OTP and returns session token', funct
             ],
         ]);
 
-    Mail::assertQueued(LoginOtpMail::class);
+    Mail::assertSent(LoginOtpMail::class);
     expect(LogSmsDriver::count())->toBe(1);
 
     // Verify OTP record exists
