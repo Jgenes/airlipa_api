@@ -11,6 +11,19 @@ class VerifyLoginOtpRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        $code = $this->input('code') ?? $this->input('otp');
+
+        if (is_int($code)) {
+            $code = (string) $code;
+        }
+
+        if ($code !== null) {
+            $this->merge(['code' => $code]);
+        }
+    }
+
     public function rules(): array
     {
         return [

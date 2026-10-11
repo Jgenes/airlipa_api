@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\AccountStatus;
+use App\Enums\OtpChannel;
 use App\Enums\OtpPurpose;
 use App\Enums\UserType;
 use App\Models\AuditLog;
@@ -67,6 +68,37 @@ test('individual user can activate account with valid OTP and receive kyc scoped
     // Verify Audit log
     expect(AuditLog::where('user_id', $user->id)->where('event', 'account_activated')->exists())->toBeTrue();
 });
+
+test('activation accepts numeric codes and the otp payload alias', function (string $field, mixed $value) {
+    $user = User::factory()->individual()->create([
+        'is_active' => false,
+        'account_status' => AccountStatus::Pending,
+    ]);
+
+    OtpCode::create([
+        'user_id' => $user->id,
+        'purpose' => OtpPurpose::Activation,
+        'code_hash' => Hash::make('123456'),
+        'channel' => OtpChannel::Email,
+        'expires_at' => now()->addMinutes(10),
+        'attempts' => 0,
+        'max_attempts' => 5,
+    ]);
+
+    $response = $this->postJson('/api/v1/auth/activate', [
+        'identifier' => $user->email,
+        $field => $value,
+    ]);
+
+    $response->assertOk()
+        ->assertJson([
+            'success' => true,
+            'next_step' => 'kyc',
+        ]);
+})->with([
+    'numeric code' => ['code', 123456],
+    'otp alias' => ['otp', '123456'],
+]);
 
 test('business user activation returns next_step kyb', function () {
     $user = User::factory()->business()->create([
