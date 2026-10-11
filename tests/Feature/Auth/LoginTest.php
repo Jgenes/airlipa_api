@@ -174,6 +174,37 @@ test('account locks after 5 consecutive failed login attempts', function () {
     expect(in_array($response->status(), [423, 429], true))->toBeTrue();
 });
 
+test('login OTP verification accepts numeric codes and the otp payload alias', function (string $field, mixed $value) {
+    $user = User::factory()->kycVerified()->create([
+        'password' => Hash::make('Password#123456'),
+    ]);
+
+    $loginResponse = $this->postJson('/api/v1/auth/login', [
+        'email' => $user->email,
+        'password' => 'Password#123456',
+    ]);
+
+    $loginResponse->assertOk();
+    $sessionToken = $loginResponse->json('data.otp_session_token');
+    $otp = OtpCode::where('user_id', $user->id)->where('purpose', OtpPurpose::Login)->latest()->first();
+    $otp->update(['code_hash' => Hash::make('654321')]);
+
+    $verifyResponse = $this->postJson('/api/v1/auth/login/verify-otp', [
+        'otp_session_token' => $sessionToken,
+        $field => $value,
+    ]);
+
+    $verifyResponse->assertOk()
+        ->assertJson([
+            'success' => true,
+            'message' => 'Login successful.',
+            'next_step' => 'dashboard',
+        ]);
+})->with([
+    'numeric code' => ['code', 654321],
+    'otp alias' => ['otp', '654321'],
+]);
+
 test('user can verify login OTP and obtain full token', function () {
     $user = User::factory()->kycVerified()->create([
         'password' => Hash::make('Password#123456'),
