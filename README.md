@@ -77,7 +77,7 @@ On validation or authorization errors:
    - Fallback dummy bcrypt hash verification prevents side-channel timing leaks when an email does not exist.
 3. **Lockout Controls**:
    - **Login**: Account locks for 15 minutes after 5 failed consecutive attempts (`locked_until`).
-   - **KYC**: Account locks for 24 hours after 3 failed verification attempts in a 24-hour window.
+   - **KYC**: Account locks for 24 hours after 3 failed verification attempts in a 24-hour window. Only incorrect challenge answers count — abandoned (`Cancelled`) and elapsed (`Expired`) sessions do not, so retrying a challenge never consumes the lockout budget.
 4. **2-Step Login OTP**:
    - Password authentication does not issue full tokens. It generates a 6-digit numeric OTP and a signed/encrypted 5-minute `otp_session_token`.
    - Full Sanctum tokens (`['*']`, 60-minute expiry) are only issued upon valid OTP verification.
@@ -221,6 +221,41 @@ All 20 records are automatically seeded via `php artisan db:seed` (`NidaMockSeed
 | 18 | `19950505123450000018` | Jackline Minja | 1995-05-05 | Flora | Iringa | Iringa | Iringa Urban |
 | 19 | `19920118123450000019` | Rashid Athumani | 1992-01-18 | Mwanahamis | Kigoma | Kigoma | Kigoma Ujiji |
 | 20 | `19960823123450000020` | Saumu Omari | 1996-08-23 | Bimkubwa | Mtwara | Mtwara | Mtwara Urban |
+
+### The Account Name Must Match the NIDA Record
+
+`POST /api/v1/kyc/nida/initiate` cross-checks the **authenticated user's** registered `first_name` / `last_name` against the NIDA record before issuing challenge questions. Entering a valid seeded NIDA number from an account registered under a different name is rejected with `422 Identity mismatch`.
+
+To verify successfully, register the account with the same name as the NIDA number you intend to use — for example an account named `Juma` / `Hamisi` paired with `19900101123450000001`. Matching is deliberately loose: it is case-insensitive, tolerates a swapped first/last name, and accepts ≥80% similarity.
+
+### Troubleshooting KYC Errors
+
+The browser console only reports the status code; the reason is in the JSON response body (`message`, plus `errors` for validation failures).
+
+| Status | `message` | Cause & fix |
+|---|---|---|
+| `422` | `Validation failed.` | `nida_number` must be a JSON **string** of exactly 20 digits — no spaces, dashes or leading `+`, and the key is snake_case (not `nidaNumber`). See the payload note below. |
+| `422` | `Identity mismatch: The registered name does not match the NIDA record.` | The logged-in account's name does not match that NIDA record. Use a matching pair from the table above. |
+| `422` | `This NIDA number is already registered and verified with another account.` | That NIDA number is already `Verified` against a different user. Pick another record or re-seed. |
+| `404` | `NIDA record not found with the provided identification number.` | Well-formed but absent from `nida_mock_records`. Run `php artisan migrate:fresh --seed`. |
+| `423` | `KYC verification is locked for 24 hours due to multiple failed attempts.` | 3 genuinely incorrect challenge attempts within 24h. Wait it out, or clear the rows while developing (see below). |
+| `429` | `Too many requests. Please slow down and try again later.` | The KYC routes are limited to 5 requests per minute. |
+| `400` | `NIDA KYC is designated for Individual accounts only.` | The token belongs to a Business account, which must use `POST /api/v1/kyb/submit`. |
+| `401` | `Unauthenticated.` | Missing or expired token, or the token lacks the `kyc` ability. |
+
+**Sending `nida_number` from JavaScript.** 20 digits exceeds `Number.MAX_SAFE_INTEGER` (16 digits), so never route the value through a JS number: `Number("19900101123450000001")` silently becomes `19900101123450000000`, which then fails with `404`. Use `<input type="text" inputmode="numeric">` and keep the value a string end to end.
+
+```json
+{ "nida_number": "19900101123450000001" }
+```
+
+**Clearing a KYC lockout while developing.**
+
+```bash
+php artisan tinker --execute="App\Models\KycVerification::where('user_id', YOUR_USER_ID)->delete();"
+```
+
+Only genuinely incorrect challenge answers count toward the lockout. Sessions superseded by a newer `initiate` call are recorded as `Cancelled`, and sessions whose 10-minute window elapsed are recorded as `Expired` — neither consumes the 3-attempt budget, so retrying or refreshing mid-flow will not lock an account out.
 
 ---
 
