@@ -16,6 +16,10 @@ class KycService
 
     /**
      * Check whether the user is currently locked out of KYC verification.
+     *
+     * Only genuinely failed challenges (wrong answers) are counted. Sessions that were
+     * superseded (Cancelled) or left to elapse (Expired) are excluded so that retrying
+     * or re-starting verification never consumes the lockout budget.
      */
     public function isLockedOut(User $user): bool
     {
@@ -143,10 +147,13 @@ class KycService
 
         $sessionExpiry = (int) config('auth_otp.kyc.session_expiry_minutes', 10);
 
-        // Cancel previous pending sessions for this user
+        // Supersede this user's previous pending challenges.
+        // These were abandoned, never answered incorrectly, so they are marked Cancelled
+        // rather than Failed — otherwise simply re-starting a challenge (retry after an
+        // error, double submit, page refresh) would consume the 3-strike lockout budget.
         KycVerification::where('user_id', $user->id)
             ->where('status', KycVerificationStatus::Pending)
-            ->update(['status' => KycVerificationStatus::Failed]);
+            ->update(['status' => KycVerificationStatus::Cancelled]);
 
         $verification = KycVerification::create([
             'user_id' => $user->id,
@@ -211,7 +218,8 @@ class KycService
         }
 
         if ($session->isExpired()) {
-            $session->update(['status' => KycVerificationStatus::Failed]);
+            // Expiry is not a failed attempt — no answers were ever judged incorrect.
+            $session->update(['status' => KycVerificationStatus::Expired]);
             AuditLogService::log('kyc_session_expired', $user, ['kyc_session_id' => $session->id]);
 
             return [
