@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             NidaMockSeeder::class,
+            ProtectedPaymentFoundationSeeder::class,
         ]);
 
         // Seed an admin user for reviewing KYB submissions

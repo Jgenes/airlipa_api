@@ -31,6 +31,10 @@ class DashboardController extends Controller
             'account_summary' => $accountSummary,
             'links' => [
                 'profile' => '/api/v1/profile',
+                'pricing_quotes' => '/api/v1/pricing/quotes',
+                'payment_links' => '/api/v1/payment-links',
+                'protected_payments' => '/api/v1/protected-payments',
+                'obligations_summary' => '/api/v1/ledger/obligations-summary',
             ],
         ];
 

@@ -4,6 +4,8 @@ namespace App\Providers;
 
 use App\Services\Nida\MockNidaService;
 use App\Services\Nida\NidaServiceInterface;
+use App\Services\PaymentProviders\PaymentProviderAdapterInterface;
+use App\Services\PaymentProviders\TzProviderGatewayAdapter;
 use App\Services\Sms\LogSmsDriver;
 use App\Services\Sms\SmsManager;
 use App\Services\Sms\SmsServiceInterface;
@@ -27,6 +29,11 @@ class AppServiceProvider extends ServiceProvider
         // Bind NIDA Service
         $this->app->singleton(NidaServiceInterface::class, function () {
             return new MockNidaService();
+        });
+
+        // Bind Provider-Neutral Payment Gateway Adapter (M05)
+        $this->app->singleton(PaymentProviderAdapterInterface::class, function () {
+            return new TzProviderGatewayAdapter();
         });
     }
 

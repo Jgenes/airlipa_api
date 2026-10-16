@@ -230,6 +230,72 @@ Import `postman_collection.json` located at the root of the project into Postman
 
 ---
 
+## Service 2: Protected Payment (Conditional Payment Workflow Core)
+
+Service 2 implements the **Airlipa One Protected Payment Core** (excluding e-commerce storefront/catalog/cart) in compliance with the SASDS architecture:
+
+- **Partner-Backed Custody Model**: Funds are collected and held through licensed Tanzanian payment providers/banks (`MPESA_TZ`, `TPESA_TZ`, `MIXX_TZ`, `AIRTEL_TZ`, `TANQR_BOT`, `CRDB_BANK`, `SANDBOX_PSP`) while Airlipa governs the conditional release workflow and append-only double-entry operational sub-ledger.
+- **Integer Minor Units Only**: All monetary values, fee quotes, ledger postings, and conservation invariants are calculated and persisted in integer minor units (`100 minor units = 1.00 TZS`) without floating-point arithmetic.
+- **Explicit Domain Conservation Invariant**: Every Protected Payment strictly satisfies:
+  $$F = P + R_L + R_Q + L + Q + V$$
+  and $0 \le D \le P$, where $F$ is funded principal, $P$ is protected balance, $D$ is disputed/frozen balance, $R_L$ is reserved for release, $R_Q$ is reserved for refund, $L$ is released to merchant, $Q$ is refunded to buyer, and $V$ is reversed/voided.
+- **Append-Only Double-Entry Sub-Ledger (`M08`)**: Every financial state transition posts balanced debit/credit journals across `1100-PROVIDER-CLEARING`, `2100-PROTECTED-CUSTOMER-FUNDS`, `2200-MERCHANT-PAYABLE`, `2300-REFUND-PAYABLE`, `2400-DEFERRED-PLATFORM-FEE`, `2500-TAX-PAYABLE-VAT`, and `4100-EARNED-PLATFORM-REVENUE`.
+
+### Protected Payment API Endpoints (`/api/v1`)
+
+| Module | Method | Endpoint | Description |
+|--------|--------|----------|-------------|
+| **M03 Merchant Trust** | `GET` | `/api/v1/merchants/{merchantId}/trust-profile` | Public merchant verification badge, KYB/KYC tier, and track record |
+| **M18 Provider Governance** | `GET` | `/api/v1/providers` | List licensed payment provider capabilities (`MPESA_TZ`, `TPESA_TZ`, `MIXX_TZ`, `AIRTEL_TZ`, `TANQR_BOT`, `CRDB_BANK`, `SANDBOX_PSP`) |
+| **M18 Provider Governance** | `PATCH` | `/api/v1/admin/providers/{providerCode}/status` | Admin governance endpoint to activate or suspend a rail |
+| **M15 Pricing & Quotes** | `GET` | `/api/v1/pricing/schedules/current` | Retrieve effective-dated price book rules |
+| **M15 Pricing & Quotes** | `POST` | `/api/v1/pricing/quotes` | Create a deterministic, versioned `FeeQuote` (`15 min` TTL) |
+| **M15 Pricing & Quotes** | `GET` | `/api/v1/pricing/quotes/{quoteId}` | Inspect a `FeeQuote` |
+| **M15 Pricing & Quotes** | `POST` | `/api/v1/pricing/quotes/{quoteId}/accept` | Accept a `FeeQuote` prior to funding |
+| **M06 Checkout Links** | `GET` | `/api/v1/payment-links/{token}` | Public, strictly read-only preview of a Protected Payment Link (`BPA-CH-14`) |
+| **M06 Checkout Links** | `POST` | `/api/v1/payment-links` | Create a shareable Protected Payment Link (verified merchants only) |
+| **M06 Checkout Links** | `GET` | `/api/v1/payment-links` | List merchant's Protected Payment Links |
+| **M06 Checkout Links** | `PATCH` | `/api/v1/payment-links/{linkId}/revoke` | Revoke an active Protected Payment Link |
+| **M06 Checkout Links** | `POST` | `/api/v1/payment-links/{token}/checkout` | Buyer accepts link terms & creates a `ProtectedPayment` agreement |
+| **M06 Protected Payments** | `POST` | `/api/v1/protected-payments` | Directly create a `ProtectedPayment` agreement (supports milestones) |
+| **M06 Protected Payments** | `GET` | `/api/v1/protected-payments` | List buyer/merchant Protected Payment agreements |
+| **M06 Protected Payments** | `GET` | `/api/v1/protected-payments/{id}` | Retrieve agreement state, milestones, evidence, disputes, and ledger trail |
+| **M05 Orchestration** | `POST` | `/api/v1/protected-payments/{id}/pay` | Initiate an idempotent `PaymentIntent` & `PaymentAttempt` |
+| **M05 Orchestration** | `GET` | `/api/v1/protected-payments/{id}/status-recovery` | Re-query non-final (`PENDING`/`UNKNOWN`) payment attempt status |
+| **M05 Webhooks** | `POST` | `/api/v1/webhooks/providers/{providerCode}` | Receive HMAC-SHA256 authenticated provider callbacks |
+| **M05 Sandbox Helper** | `POST` | `/api/v1/protected-payments/{id}/simulate-provider-callback` | Local/testing helper to sign and dispatch a provider callback (`SUCCEEDED`, `PENDING`, `UNKNOWN`, `FAILED`) |
+| **M10 Evidence** | `POST` | `/api/v1/protected-payments/{id}/evidence` | Submit delivery/fulfillment evidence with SHA-256 integrity hash |
+| **M06 Release** | `POST` | `/api/v1/protected-payments/{id}/release` | Step-up authenticated (`handover_otp` or `step_up_password`) full or milestone release |
+| **M06 Refund** | `POST` | `/api/v1/protected-payments/{id}/refund` | Execute full or partial refund using original `FeeQuote` version |
+| **M14 Payouts** | `GET` | `/api/v1/payout-accounts` | List merchant verified payout accounts |
+| **M14 Payouts** | `POST` | `/api/v1/payout-accounts` | Register a verified merchant payout account with step-up password (`BPA-DATA-03`) |
+| **M14 Payouts** | `POST` | `/api/v1/protected-payments/{id}/settle-payout` | Execute merchant payout settlement for released, undisputed funds |
+| **M14 Payouts** | `GET` | `/api/v1/payouts` | List merchant payout instructions & settlement batches |
+| **M06 Receipt** | `GET` | `/api/v1/protected-payments/{id}/receipt` | Generate a cryptographically verifiable digital receipt (`FR-023`) |
+| **M08 Journals** | `GET` | `/api/v1/protected-payments/{id}/journals` | Retrieve balanced double-entry sub-ledger journals for an agreement |
+| **M11 Disputes** | `POST` | `/api/v1/protected-payments/{id}/disputes` | Open a dispute (`NON_DELIVERY`, `MATERIALLY_DIFFERENT`, `PARTIAL_DELIVERY`, etc.) and atomically freeze funds |
+| **M11 Disputes** | `GET` | `/api/v1/disputes/{caseId}` | View dispute case details |
+| **M11 Disputes** | `POST` | `/api/v1/admin/disputes/{caseId}/resolve` | Admin dispute resolution (`FULL_RELEASE_MERCHANT`, `FULL_REFUND_BUYER`, `PARTIAL_SPLIT`) |
+| **M08 Sub-Ledger** | `GET` | `/api/v1/ledger/obligations-summary` | Real-time customer-funds obligation vs. provider clearing balance |
+| **M12 Notifications** | `GET` | `/api/v1/notifications` | Bilingual (`?lang=en` / `?lang=sw`) user notifications via Transactional Outbox |
+| **M12 Notifications** | `PATCH` | `/api/v1/notifications/{notificationId}/read` | Mark notification as read |
+| **M13 Support Cases** | `POST` | `/api/v1/support/tickets` | Open customer support case linked to a transaction or dispute |
+| **M13 Support Cases** | `GET` | `/api/v1/support/tickets` | List user/admin support cases |
+| **M13 Support Cases** | `POST` | `/api/v1/support/tickets/{ticketNumber}/messages` | Reply to a support ticket |
+| **M16 Reporting** | `GET` | `/api/v1/reports/statements` | User/merchant statement with fee, VAT, and net settlement breakdown |
+| **M16 Reporting** | `GET` | `/api/v1/admin/reports/trial-balance` | Complete operational sub-ledger trial balance |
+| **M16 Reporting** | `GET` | `/api/v1/admin/reports/safeguarding-proof-pack` | Regulatory safeguarding & conservation invariant proof pack |
+| **M09 Reconciliation** | `POST` | `/api/v1/admin/reconciliation/runs` | Execute 3-way reconciliation run (Statement vs Orchestration vs Sub-Ledger) |
+| **M09 Reconciliation** | `GET` | `/api/v1/admin/reconciliation/exceptions` | List open/resolved reconciliation exceptions |
+| **M09 Reconciliation** | `PATCH` | `/api/v1/admin/reconciliation/exceptions/{exceptionId}/resolve` | Resolve a reconciliation exception with audit trail |
+| **M07 Risk Engine** | `GET` | `/api/v1/admin/risk/alerts` | List velocity, high-value, and anomaly risk alerts |
+| **M07 Risk Engine** | `PATCH` | `/api/v1/admin/risk/alerts/{alertCode}/review` | Compliance review of a risk alert |
+| **M17 Dual Control** | `POST` | `/api/v1/admin/governance/approvals` | Maker initiates a dual-control governance request (`P-05`, `FR-036`) |
+| **M17 Dual Control** | `POST` | `/api/v1/admin/governance/approvals/{approvalCode}/decide` | Independent checker approves/rejects dual-control request (`Maker != Checker`) |
+| **M17 Audit Chain** | `GET` | `/api/v1/admin/audit-logs/verify-chain` | Verify tamper-evident SHA-256 hash chain across all audit logs (`FR-030`) |
+
+---
+
 ## Running Automated Feature Tests
 
 Execute the Pest test suite:
@@ -249,4 +315,8 @@ php artisan test --filter=KycTest
 php artisan test --filter=KybTest
 php artisan test --filter=DashboardProfileTest
 php artisan test --filter=SecurityTest
+php artisan test --filter=PricingAndQuoteTest
+php artisan test --filter=PaymentLinkAndAgreementTest
+php artisan test --filter=OrchestrationAndWebhookTest
+php artisan test --filter=LifecycleReleaseRefundDisputeTest
 ```

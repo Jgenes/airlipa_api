@@ -2,6 +2,7 @@
 
 use App\Http\Middleware\EnsureAccountActive;
 use App\Http\Middleware\EnsureAdmin;
+use App\Http\Middleware\EnsureCorrelationId;
 use App\Http\Middleware\EnsureFullyVerified;
 use App\Http\Middleware\ForceJsonResponse;
 use App\Http\Middleware\SecurityHeaders;
@@ -16,6 +17,7 @@ use Illuminate\Http\Exceptions\ThrottleRequestsException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
 
@@ -27,9 +29,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Apply JSON header and security headers to API group
+        // Apply JSON header, correlation ID, and security headers to API group
         $middleware->api(prepend: [
             ForceJsonResponse::class,
+            EnsureCorrelationId::class,
             SecurityHeaders::class,
         ]);
 
@@ -78,6 +81,18 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(function (ThrottleRequestsException|TooManyRequestsHttpException $e, Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
                 return ApiResponse::error('Too many requests. Please slow down and try again later.', null, null, 429);
+            }
+        });
+
+        $exceptions->render(function (HttpException $e, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return ApiResponse::error($e->getMessage() ?: 'Request could not be processed.', null, null, $e->getStatusCode());
+            }
+        });
+
+        $exceptions->render(function (\DomainException $e, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return ApiResponse::error($e->getMessage(), null, null, 422);
             }
         });
 
