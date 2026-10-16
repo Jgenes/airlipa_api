@@ -328,6 +328,352 @@
           }
         }
       ]
+    },
+    {
+      "name": "6. Pricing, Fee Quotes & Providers (M15, M18)",
+      "item": [
+        {
+          "name": "List Approved Payment Providers (M18)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/providers", "host": ["{{base_url}}"], "path": ["providers"] }
+          }
+        },
+        {
+          "name": "Get Current Price Book Schedule (M15)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/pricing/schedules/current", "host": ["{{base_url}}"], "path": ["pricing", "schedules", "current"] }
+          }
+        },
+        {
+          "name": "Create Fee Quote (M15)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": 2,\n  \"transaction_type\": \"PROTECTED_PAYMENT\",\n  \"currency\": \"TZS\",\n  \"principal_amount_minor\": 10000000\n}"
+            },
+            "url": { "raw": "{{base_url}}/pricing/quotes", "host": ["{{base_url}}"], "path": ["pricing", "quotes"] }
+          }
+        },
+        {
+          "name": "Accept Fee Quote (M15)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/pricing/quotes/{{quote_id}}/accept", "host": ["{{base_url}}"], "path": ["pricing", "quotes", "{{quote_id}}", "accept"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Protected Payment Links & Merchant Trust (M03, M06)",
+      "item": [
+        {
+          "name": "Get Public Merchant Trust Profile (M03)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/merchants/2/trust-profile", "host": ["{{base_url}}"], "path": ["merchants", "2", "trust-profile"] }
+          }
+        },
+        {
+          "name": "Create Protected Payment Link (M06)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"200W Solar Panel Kit + Inverter\",\n  \"description\": \"Complete solar home system with 2-year warranty and Arusha delivery.\",\n  \"currency\": \"TZS\",\n  \"principal_amount_minor\": 25000000,\n  \"delivery_method\": \"COURIER\",\n  \"delivery_days\": 2,\n  \"max_uses\": 1\n}"
+            },
+            "url": { "raw": "{{base_url}}/payment-links", "host": ["{{base_url}}"], "path": ["payment-links"] }
+          }
+        },
+        {
+          "name": "Preview Protected Payment Link (Read-Only)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/payment-links/{{link_token}}", "host": ["{{base_url}}"], "path": ["payment-links", "{{link_token}}"] }
+          }
+        },
+        {
+          "name": "Checkout From Protected Payment Link",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/payment-links/{{link_token}}/checkout", "host": ["{{base_url}}"], "path": ["payment-links", "{{link_token}}", "checkout"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Protected Payments, Orchestration, Evidence & Release (M05, M06, M10)",
+      "item": [
+        {
+          "name": "Create Direct Protected Payment Agreement",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"merchant_id\": 2,\n  \"principal_amount_minor\": 20000000,\n  \"title\": \"Samsung Galaxy S23 Ultra\",\n  \"item_description\": \"256GB Phantom Black with original charger\",\n  \"delivery_method\": \"IN_PERSON_OTP\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/protected-payments", "host": ["{{base_url}}"], "path": ["protected-payments"] }
+          }
+        },
+        {
+          "name": "Initiate Idempotent Payment Intent (M05)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "idem-pay-001" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider_code\": \"MPESA_TZ\",\n  \"payer_phone_or_account\": \"0754111222\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/protected-payments/{{protected_payment_id}}/pay", "host": ["{{base_url}}"], "path": ["protected-payments", "{{protected_payment_id}}", "pay"] }
+          }
+        },
+        {
+          "name": "Simulate Authenticated Provider Callback (Sandbox)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"SUCCEEDED\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/protected-payments/{{protected_payment_id}}/simulate-provider-callback", "host": ["{{base_url}}"], "path": ["protected-payments", "{{protected_payment_id}}", "simulate-provider-callback"] }
+          }
+        },
+        {
+          "name": "Submit Fulfillment Evidence (M10)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"evidence_type\": \"COURIER_TRACKING\",\n  \"courier_name\": \"DHL Express Tanzania\",\n  \"tracking_number\": \"DHL-TZ-99887766\",\n  \"description\": \"Dispatched to Arusha Clocktower branch.\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/protected-payments/{{protected_payment_id}}/evidence", "host": ["{{base_url}}"], "path": ["protected-payments", "{{protected_payment_id}}", "evidence"] }
+          }
+        },
+        {
+          "name": "Authorize Step-Up Release (M06)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "idem-release-001" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"handover_otp\": \"123456\",\n  \"notes\": \"Item inspected and accepted.\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/protected-payments/{{protected_payment_id}}/release", "host": ["{{base_url}}"], "path": ["protected-payments", "{{protected_payment_id}}", "release"] }
+          }
+        },
+        {
+          "name": "Get Verifiable Receipt (FR-023)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/protected-payments/{{protected_payment_id}}/receipt", "host": ["{{base_url}}"], "path": ["protected-payments", "{{protected_payment_id}}", "receipt"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Disputes, Payouts, Sub-Ledger, Notifications & Support (M08, M11, M12, M13, M14, M16)",
+      "item": [
+        {
+          "name": "Open Dispute Case & Freeze Balance (M11)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"case_type\": \"MATERIALLY_DIFFERENT\",\n  \"disputed_amount_minor\": 10000000,\n  \"reason\": \"Delivered specification differs from agreed item.\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/protected-payments/{{protected_payment_id}}/disputes", "host": ["{{base_url}}"], "path": ["protected-payments", "{{protected_payment_id}}", "disputes"] }
+          }
+        },
+        {
+          "name": "Register Verified Merchant Payout Account (M14)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_type\": \"MNO_WALLET\",\n  \"provider_code\": \"MPESA_TZ\",\n  \"account_name\": \"Kilimanjaro Electronics Ltd\",\n  \"account_number\": \"+255754777888\",\n  \"step_up_password\": \"BusinessSecure#2026!\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/payout-accounts", "host": ["{{base_url}}"], "path": ["payout-accounts"] }
+          }
+        },
+        {
+          "name": "Execute Merchant Payout Settlement (M14)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "idem-settle-001" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/protected-payments/{{protected_payment_id}}/settle-payout", "host": ["{{base_url}}"], "path": ["protected-payments", "{{protected_payment_id}}", "settle-payout"] }
+          }
+        },
+        {
+          "name": "Get Sub-Ledger Obligations Summary (M08)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/ledger/obligations-summary", "host": ["{{base_url}}"], "path": ["ledger", "obligations-summary"] }
+          }
+        },
+        {
+          "name": "Get Bilingual User Notifications (M12)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/notifications?lang=sw", "host": ["{{base_url}}"], "path": ["notifications"], "query": [{ "key": "lang", "value": "sw" }] }
+          }
+        },
+        {
+          "name": "Open Support Ticket (M13)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"RELEASE_HELP\",\n  \"priority\": \"HIGH\",\n  \"subject\": \"Handover OTP assistance\",\n  \"message\": \"Please guide me on confirming delivery.\"\n}"
+            },
+            "url": { "raw": "{{base_url}}/support/tickets", "host": ["{{base_url}}"], "path": ["support", "tickets"] }
+          }
+        },
+        {
+          "name": "Get User & Merchant Statement (M16)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/reports/statements", "host": ["{{base_url}}"], "path": ["reports", "statements"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Admin Reconciliation, Risk, Safeguarding & Dual-Control Governance (M07, M09, M16, M17)",
+      "item": [
+        {
+          "name": "Execute 3-Way Reconciliation Run (M09)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider_code\": \"MPESA_TZ\",\n  \"statement_date\": \"2026-10-16\",\n  \"currency\": \"TZS\",\n  \"statement_lines\": [\n    {\n      \"provider_reference\": \"MPESA-REF-123456\",\n      \"direction\": \"INFLOW\",\n      \"amount_minor\": 10177000\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{base_url}}/admin/reconciliation/runs", "host": ["{{base_url}}"], "path": ["admin", "reconciliation", "runs"] }
+          }
+        },
+        {
+          "name": "Get Safeguarding & Compliance Proof Pack (M16)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/admin/reports/safeguarding-proof-pack", "host": ["{{base_url}}"], "path": ["admin", "reports", "safeguarding-proof-pack"] }
+          }
+        },
+        {
+          "name": "Verify Tamper-Evident Audit Hash Chain (FR-030)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{auth_token}}" }
+            ],
+            "url": { "raw": "{{base_url}}/admin/audit-logs/verify-chain", "host": ["{{base_url}}"], "path": ["admin", "audit-logs", "verify-chain"] }
+          }
+        }
+      ]
     }
   ]
 }
