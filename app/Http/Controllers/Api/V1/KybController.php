@@ -85,7 +85,9 @@ class KybController extends Controller
         $content = Storage::disk('local')->get($path);
         $mime = Storage::disk('local')->mimeType($path) ?: 'application/octet-stream';
 
-        return response($content, 200, [
+        return response()->stream(function () use ($content) {
+            echo $content;
+        }, 200, [
             'Content-Type' => $mime,
             'Content-Disposition' => 'inline; filename="' . basename($path) . '"',
         ]);

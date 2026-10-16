@@ -46,7 +46,13 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (ValidationException $e, Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
-                return ApiResponse::error('Validation failed.', $e->errors(), null, 422);
+                $message = 'Validation failed.';
+                $first = collect($e->errors())->flatten()->first();
+                if (is_string($first) && $first !== '') {
+                    $message .= ' ' . $first;
+                }
+
+                return ApiResponse::error($message, $e->errors(), null, 422);
             }
         });
 
