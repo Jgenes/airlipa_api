@@ -269,3 +269,116 @@ test('nida kyc verification locks account for 24h after 3 failed attempts', func
     ]);
     $initiateResponse->assertStatus(423);
 });
+
+test('nida kyc initiate normalizes formatted nida numbers with spaces and dashes', function () {
+    $record = NidaMockRecord::factory()->create([
+        'nida_number' => '19900101123450000001',
+        'first_name' => 'Juma',
+        'last_name' => 'Hamisi',
+    ]);
+
+    $user = User::factory()->active()->individual()->create([
+        'first_name' => 'Juma',
+        'last_name' => 'Hamisi',
+    ]);
+
+    \Laravel\Sanctum\Sanctum::actingAs($user, ['kyc']);
+
+    // Users commonly type NIDA numbers grouped with spaces or dashes.
+    $response = $this->postJson('/api/v1/kyc/nida/initiate', [
+        'nida_number' => '1990 0101 1234 5000 0001',
+    ]);
+
+    $response->assertStatus(200)
+        ->assertJson([
+            'success' => true,
+            'next_step' => 'verify_kyc_answers',
+        ]);
+
+    $response = $this->postJson('/api/v1/kyc/nida/initiate', [
+        'nida_number' => '1990-0101-1234-5000-0001',
+    ]);
+
+    $response->assertStatus(200)
+        ->assertJson([
+            'success' => true,
+            'next_step' => 'verify_kyc_answers',
+        ]);
+});
+
+test('nida kyc initiate accepts nida number sent as a json number without precision loss', function () {
+    $record = NidaMockRecord::factory()->create([
+        'nida_number' => '19900101123450000001',
+        'first_name' => 'Juma',
+        'last_name' => 'Hamisi',
+    ]);
+
+    $user = User::factory()->active()->individual()->create([
+        'first_name' => 'Juma',
+        'last_name' => 'Hamisi',
+    ]);
+
+    \Laravel\Sanctum\Sanctum::actingAs($user, ['kyc']);
+
+    // Clients may JSON-encode the 20-digit number as a bare number literal.
+    $response = $this->call(
+        'POST',
+        '/api/v1/kyc/nida/initiate',
+        [],
+        [],
+        [],
+        [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+        ],
+        '{"nida_number":19900101123450000001}'
+    );
+
+    $response->assertStatus(200)
+        ->assertJson([
+            'success' => true,
+            'next_step' => 'verify_kyc_answers',
+        ]);
+});
+
+test('nida kyc initiate accepts camel case nidaNumber field alias', function () {
+    $record = NidaMockRecord::factory()->create([
+        'nida_number' => '19900101123450000001',
+        'first_name' => 'Juma',
+        'last_name' => 'Hamisi',
+    ]);
+
+    $user = User::factory()->active()->individual()->create([
+        'first_name' => 'Juma',
+        'last_name' => 'Hamisi',
+    ]);
+
+    \Laravel\Sanctum\Sanctum::actingAs($user, ['kyc']);
+
+    $response = $this->postJson('/api/v1/kyc/nida/initiate', [
+        'nidaNumber' => '19900101123450000001',
+    ]);
+
+    $response->assertStatus(200)
+        ->assertJson([
+            'success' => true,
+            'next_step' => 'verify_kyc_answers',
+        ]);
+});
+
+test('nida kyc initiate returns a clear message for invalid nida numbers', function () {
+    $user = User::factory()->active()->individual()->create();
+
+    \Laravel\Sanctum\Sanctum::actingAs($user, ['kyc']);
+
+    $response = $this->postJson('/api/v1/kyc/nida/initiate', [
+        'nida_number' => '12345',
+    ]);
+
+    $response->assertStatus(422)
+        ->assertJsonValidationErrors(['nida_number'])
+        ->assertJson([
+            'success' => false,
+            'message' => 'Validation failed. The NIDA number must be exactly 20 digits long.',
+        ]);
+});
