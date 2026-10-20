@@ -558,11 +558,16 @@ class SubledgerService
 
             $account = $this->accountFor($contract);
 
+            // Milestone funding sits in held_milestones_minor until that
+            // milestone is released; releasing it from available_minor would
+            // find an empty bucket on a fully milestone-funded contract.
+            $releaseSource = $milestoneId ? 'held_milestones_minor' : 'available_minor';
+
             if ($account) {
                 $this->transferBucket(
                     SubledgerType::Contract,
                     $account,
-                    'available_minor',
+                    $releaseSource,
                     'pending_release_minor',
                     $amountMinor,
                     $meta + ['idempotency_key' => $baseKey . ':contract']
@@ -673,7 +678,7 @@ class SubledgerService
                     SubledgerType::Contract,
                     $account,
                     'pending_release_minor',
-                    'available_minor',
+                    $milestoneId ? 'held_milestones_minor' : 'available_minor',
                     $amountMinor,
                     $meta + ['idempotency_key' => $baseKey . ':contract']
                 );
@@ -922,7 +927,7 @@ class SubledgerService
         $this->transferBucket(
             SubledgerType::Contract,
             $account,
-            'available_minor',
+            $milestoneUuid !== null ? 'held_milestones_minor' : 'available_minor',
             'pending_refund_minor',
             $amountMinor,
             $meta + ['idempotency_key' => $baseKey . ':contract']
@@ -1047,7 +1052,7 @@ class SubledgerService
             SubledgerType::Contract,
             $account,
             'pending_refund_minor',
-            'available_minor',
+            $milestoneUuid !== null ? 'held_milestones_minor' : 'available_minor',
             $amountMinor,
             $meta + ['idempotency_key' => $baseKey . ':contract']
         );

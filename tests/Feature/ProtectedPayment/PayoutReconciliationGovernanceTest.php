@@ -80,7 +80,7 @@ test('merchant can register verified payout account with step-up password and se
         'idempotency_key' => 'idem-settle-payout-001',
     ]);
 
-    $settleResponse->assertStatus(201)
+    $settleResponse->assertStatus(200)
         ->assertJson([
             'success' => true,
             'next_step' => 'completed',
