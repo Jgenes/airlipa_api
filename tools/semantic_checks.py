@@ -9,6 +9,11 @@ Catches the mistakes that actually happen when wiring a Laravel app by hand:
   3. Classes referenced in `new X(...)`, `X::method(` or `X::class` inside the
      app that do not exist anywhere in the app namespace map.
   4. Route files referencing controller classes that were never imported.
+  5. Injected services that do not expose the method being called.
+  6. Enum cases referenced in code that the enum no longer declares.
+  7. Blade mail views named by Mailables that do not exist.
+  8. config('group...') references with no matching config file.
+  9. Model enum casts whose values the migration's enum column rejects.
 
 Usage:
     python3 tools/semantic_checks.py
@@ -346,6 +351,105 @@ def check_config_files() -> list[dict]:
     return findings
 
 
+def enum_backing_values() -> dict[str, dict[str, str]]:
+    """App\\Enums\\Foo => {case name: backing value} for backed enums."""
+    values: dict[str, dict[str, str]] = {}
+    enums_dir = ROOT / "app" / "Enums"
+
+    if not enums_dir.exists():
+        return values
+
+    for path in sorted(enums_dir.glob("*.php")):
+        source = read(path)
+        class_match = re.search(r"^\s*enum\s+([A-Za-z0-9_]+)\s*:\s*string", source, re.MULTILINE)
+        if not class_match:
+            continue
+        pairs = re.findall(r"^\s*case\s+([A-Za-z0-9_]+)\s*=\s*'([^']*)'", source, re.MULTILINE)
+        values[f"App\\Enums\\{class_match.group(1)}"] = dict(pairs)
+
+    return values
+
+
+def migration_enum_columns() -> dict[tuple[str, str], set[str]]:
+    """(table, column) => allowed values, as declared by the migrations."""
+    columns: dict[tuple[str, str], set[str]] = {}
+
+    for path in sorted((ROOT / "database" / "migrations").glob("*.php")):
+        source = read(path)
+        table = None
+        for match in re.finditer(
+            r"Schema::(?:create|table)\(\s*'([a-z0-9_]+)'|\$table->enum\(\s*'([a-z0-9_]+)'\s*,\s*\[([^\]]*)\]",
+            source,
+        ):
+            if match.group(1):
+                table = match.group(1)
+                continue
+            if table is None:
+                continue
+            allowed = set(re.findall(r"'([^']*)'", match.group(3)))
+            columns[(table, match.group(2))] = allowed
+
+    return columns
+
+
+def model_table(model: str, source: str) -> str:
+    explicit = re.search(r"protected\s+\$table\s*=\s*'([a-z0-9_]+)'", source)
+    if explicit:
+        return explicit.group(1)
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", model).lower()
+    return snake if snake.endswith("s") else f"{snake}s"
+
+
+def check_enum_column_drift() -> list[dict]:
+    """A model casting a column to an enum must fit the column's migration enum.
+
+    This is the failure mode behind 'CHECK constraint failed: purpose': a new
+    OtpPurpose case was added while the column still only allowed the two
+    original values. Production MySQL in strict mode rejects it too, so the
+    write fails at runtime and not at review time.
+    """
+    findings = []
+    backing = enum_backing_values()
+    columns = migration_enum_columns()
+
+    for path in php_files("app/Models"):
+        source = read(path)
+        model_match = re.search(r"^\s*class\s+([A-Za-z0-9_]+)", source, re.MULTILINE)
+        if not model_match:
+            continue
+
+        model = model_match.group(1)
+        table = model_table(model, source)
+        enums = {
+            alias: fqcn
+            for alias, fqcn in imports_of(source).items()
+            if fqcn in backing
+        }
+
+        for match in re.finditer(r"'([a-z0-9_]+)'\s*=>\s*([A-Za-z0-9_]+)::class\s*,", source):
+            column, alias = match.group(1), match.group(2)
+            if alias not in enums:
+                continue
+            allowed = columns.get((table, column))
+            if allowed is None:
+                continue
+            declared = set(backing[enums[alias]].values())
+            missing = sorted(declared - allowed)
+            if missing:
+                findings.append(
+                    {
+                        "check": "enum_column_drift",
+                        "file": str(path.relative_to(ROOT)),
+                        "detail": (
+                            f"{table}.{column} allows {sorted(allowed)} but "
+                            f"{enums[alias]} also has {missing}"
+                        ),
+                    }
+                )
+
+    return findings
+
+
 def main(argv: list[str]) -> int:
     files = php_files("app", "config", "database", "routes", "tests")
 
@@ -361,6 +465,7 @@ def main(argv: list[str]) -> int:
     findings += check_enum_cases()
     findings += check_mail_views()
     findings += check_config_files()
+    findings += check_enum_column_drift()
 
     if "--json" in argv:
         print(json.dumps({"findings": findings, "files_checked": len(files)}, indent=2))
