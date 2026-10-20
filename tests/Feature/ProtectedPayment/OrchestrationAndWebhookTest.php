@@ -236,7 +236,8 @@ test('provider webhook with mismatched amount transitions intent to UNKNOWN and 
         ]);
 
     expect(ReconciliationException::count())->toBe(1)
-        ->and(LedgerJournal::count())->toBe(0);
+        ->and(LedgerJournal::count())->toBe(1)
+        ->and(LedgerJournal::first()->event_type)->toBe('DEPOSIT_PARTIAL_HELD');
 });
 
 test('admin can suspend a degraded provider capability and new collections on that rail are blocked', function () {

@@ -310,8 +310,8 @@ test('delivery confirmation QR is single-use and moves the agreement to awaiting
     test()->postJson("/api/v1/protected-payments/{$fixture['payment_id']}/confirm-delivery", [
         'delivery_token' => $token,
     ])->assertStatus(200)
-        ->assertJsonPath('data.status', 'AWAITING_ACCEPTANCE')
-        ->assertJsonPath('data.fulfillment_status', 'DELIVERED_CONFIRMED');
+        ->assertJsonPath('data.states.status', 'AWAITING_ACCEPTANCE')
+        ->assertJsonPath('data.states.fulfillment_status', 'DELIVERED_CONFIRMED');
 
     // Token cannot be replayed
     test()->postJson("/api/v1/protected-payments/{$fixture['payment_id']}/confirm-delivery", [

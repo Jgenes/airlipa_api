@@ -45,9 +45,13 @@ class ProtectedPaymentService
         protected ProviderRegistryService $providerRegistry,
         protected PaymentProviderAdapterInterface $providerAdapter,
         protected LedgerService $ledgerService,
-        protected ?RiskEngineService $riskEngine = null,
-        protected ?NotificationOutboxService $outboxService = null,
-        protected ?SubledgerService $subledgerService = null
+        // Required, not optional. When these were nullable with a null
+        // default the container happily built the service with all three set
+        // to null, so risk scoring, outbox notifications and - worst of all -
+        // every escrow subledger movement were skipped without an error.
+        protected RiskEngineService $riskEngine,
+        protected NotificationOutboxService $outboxService,
+        protected SubledgerService $subledgerService
     ) {}
 
     /**
@@ -475,7 +479,7 @@ class ProtectedPaymentService
                 );
             }
 
-            if ($this->outboxService) {
+            if ($this->outboxService !== null) {
                 $this->outboxService->publishEvent(
                     aggregateType: 'PROTECTED_PAYMENT',
                     aggregateId: $agreement->protected_payment_id,
@@ -861,7 +865,7 @@ class ProtectedPaymentService
             $contract = $payment->escrowContract;
             $reservationKey = "relres:{$payment->protected_payment_id}:{$idempotencyKey}";
 
-            if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+            if ($contract && !$fromDisputeFrozen) {
                 $this->subledgerService->reserveRelease(
                     contract: $contract,
                     payment: $payment,
@@ -881,7 +885,7 @@ class ProtectedPaymentService
 
             // 2b. Provider rejected the disbursement: reverse the reservation, keep funds in escrow.
             if (($providerResult['executed'] ?? false) === false) {
-                if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+                if ($contract && !$fromDisputeFrozen) {
                     $this->subledgerService->reverseReleaseReservation(
                         contract: $contract,
                         payment: $payment,
@@ -950,7 +954,7 @@ class ProtectedPaymentService
                 ]);
             }
 
-            if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+            if ($contract && !$fromDisputeFrozen) {
                 $this->subledgerService->confirmRelease(
                     contract: $contract,
                     amountMinor: $releasePrincipalMinor,
@@ -1044,7 +1048,7 @@ class ProtectedPaymentService
             $contract = $payment->escrowContract;
             $refundReservationKey = "rfdres:{$payment->protected_payment_id}:{$idempotencyKey}";
 
-            if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+            if ($contract && !$fromDisputeFrozen) {
                 $this->subledgerService->reserveRefund(
                     contract: $contract,
                     amountMinor: $refundPrincipalMinor,
@@ -1064,7 +1068,7 @@ class ProtectedPaymentService
 
             // 3b. Provider rejected the refund: release the reservation, funds stay protected.
             if (($providerResult['executed'] ?? true) === false) {
-                if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+                if ($contract && !$fromDisputeFrozen) {
                     $this->subledgerService->reverseRefundReservation(
                         contract: $contract,
                         amountMinor: $refundPrincipalMinor,
@@ -1126,7 +1130,7 @@ class ProtectedPaymentService
                 }
             }
 
-            if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+            if ($contract && !$fromDisputeFrozen) {
                 $this->subledgerService->confirmRefund(
                     contract: $contract,
                     payment: $payment,

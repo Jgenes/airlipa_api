@@ -41,7 +41,7 @@ test('merchant can register verified payout account with step-up password and se
         'provider_code' => 'MPESA_TZ',
         'account_name' => 'Zanzibar Spice Exporters Ltd',
         'account_number' => '+255754777888',
-        'step_up_password' => 'Password123!',
+        'step_up_password' => 'Password#123456',
     ]);
     $goodAccount->assertStatus(201)
         ->assertJsonPath('data.verification_status', 'VERIFIED')
