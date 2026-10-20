@@ -23,6 +23,7 @@ class PartySubledgerAccount extends Model
         'held_minor',
         'paid_out_minor',
         'refunded_minor',
+        'reduced_minor',
         'state_version',
     ];
 
@@ -34,6 +35,7 @@ class PartySubledgerAccount extends Model
             'held_minor' => 'integer',
             'paid_out_minor' => 'integer',
             'refunded_minor' => 'integer',
+            'reduced_minor' => 'integer',
             'state_version' => 'integer',
         ];
     }

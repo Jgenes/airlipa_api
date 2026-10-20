@@ -7,6 +7,7 @@ use App\Enums\DisputeOutcome;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class DisputeCase extends Model
 {
@@ -34,6 +35,13 @@ class DisputeCase extends Model
         'sla_deadline_at',
         'decided_at',
         'appeal_deadline_at',
+        'appeal_count',
+        'original_decision_outcome',
+        'appeal_reason',
+        'appealed_at',
+        'appealed_by_user_id',
+        'case_file_path',
+        'case_file_generated_at',
     ];
 
     protected function casts(): array
@@ -47,6 +55,9 @@ class DisputeCase extends Model
             'sla_deadline_at' => 'datetime',
             'decided_at' => 'datetime',
             'appeal_deadline_at' => 'datetime',
+            'appeal_count' => 'integer',
+            'appealed_at' => 'datetime',
+            'case_file_generated_at' => 'datetime',
         ];
     }
 
@@ -68,5 +79,20 @@ class DisputeCase extends Model
     public function approvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by_user_id');
+    }
+
+    public function appealedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'appealed_by_user_id');
+    }
+
+    public function messages(): HasMany
+    {
+        return $this->hasMany(DisputeMessage::class)->orderBy('created_at');
+    }
+
+    public function holds(): HasMany
+    {
+        return $this->hasMany(DisputeHold::class);
     }
 }

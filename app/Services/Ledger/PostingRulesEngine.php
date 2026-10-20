@@ -19,6 +19,11 @@ class PostingRulesEngine
     public const EVENT_DEPOSIT_CONFIRMED = 'DEPOSIT_CONFIRMED';
     public const EVENT_DEPOSIT_OVERPAYMENT_SUSPENSE = 'DEPOSIT_OVERPAYMENT_SUSPENSE';
     public const EVENT_DEPOSIT_PARTIAL_HELD = 'DEPOSIT_PARTIAL_HELD';
+    public const EVENT_DISPUTE_OPENED = 'DISPUTE_OPENED';
+    public const EVENT_DISPUTE_RESOLVED = 'DISPUTE_RESOLVED';
+    public const EVENT_REFUND_REQUESTED = 'REFUND_REQUESTED';
+    public const EVENT_REFUND_SUCCEEDED = 'REFUND_SUCCEEDED';
+    public const EVENT_ADJUSTMENT = 'ADJUSTMENT';
 
     /**
      * Rule registry. Each rule declares its GL line template as a pure
@@ -129,6 +134,44 @@ class PostingRulesEngine
     }
 
     /**
+     * Events whose GL journal is produced by a dedicated LedgerService poster
+     * (they still belong in the registry so the catalogue is complete and
+     * every booked event is traceable to a rule).
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public static function delegatedRules(): array
+    {
+        return [
+            self::EVENT_DISPUTE_OPENED => [
+                'version' => 'v1.0',
+                'poster' => 'LedgerService::postDisputeFreeze',
+                'description' => 'Freeze disputed funds: debit Protected Customer Liability, credit Dispute Frozen Liability; subledger available -> frozen.',
+            ],
+            self::EVENT_DISPUTE_RESOLVED => [
+                'version' => 'v1.0',
+                'poster' => 'LedgerService::postProtectedRelease / postProtectedRefund (from dispute hold)',
+                'description' => 'Execute the mediator split from the dispute-frozen liability; subledger frozen -> released / refunded.',
+            ],
+            self::EVENT_REFUND_REQUESTED => [
+                'version' => 'v1.0',
+                'poster' => 'subledger reservation only (no GL movement until the provider confirms)',
+                'description' => 'Reserve the refundable amount: subledger available -> pending_refund, blocking double release.',
+            ],
+            self::EVENT_REFUND_SUCCEEDED => [
+                'version' => 'v1.0',
+                'poster' => 'LedgerService::postProtectedRefund',
+                'description' => 'Provider-confirmed refund: debit customer liability (fee/VAT reversal legs), credit provider clearing; subledger pending_refund -> refunded.',
+            ],
+            self::EVENT_ADJUSTMENT => [
+                'version' => 'v1.0',
+                'poster' => 'LedgerService::postJournal (reversal + new entry only, maker-checker required)',
+                'description' => 'Manual correction: never edits history; a reversal entry plus a corrected entry, approved by an independent checker.',
+            ],
+        ];
+    }
+
+    /**
      * Resolve the journal lines for an event. Throws on unknown events so no
      * caller can post outside the registry.
      *
@@ -184,6 +227,16 @@ class PostingRulesEngine
                     ],
                     $this->lineTemplate($eventCode)
                 ),
+            ];
+        }
+
+        foreach (self::delegatedRules() as $eventCode => $rule) {
+            $catalogue[] = [
+                'event_code' => $eventCode,
+                'version' => $rule['version'],
+                'status' => 'LIVE',
+                'description' => $rule['description'],
+                'poster' => $rule['poster'],
             ];
         }
 

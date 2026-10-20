@@ -770,12 +770,36 @@ class ProtectedPaymentService
             ]);
         }
 
+        $milestone = null;
+        $milestoneUuid = null;
+
+        if (!empty($data['milestone_id'])) {
+            $milestone = ProtectedPaymentMilestone::where('protected_payment_id', $payment->id)
+                ->where('milestone_id', $data['milestone_id'])
+                ->firstOrFail();
+            $milestoneUuid = (string) $data['milestone_id'];
+
+            if ($milestone->remainingAmountMinor() <= 0) {
+                throw ValidationException::withMessages([
+                    'milestone_id' => ['This milestone has already been fully released or refunded.'],
+                ]);
+            }
+        }
+
         $eligibleMinor = $payment->eligibleForDecisionMinor();
-        $refundPrincipalMinor = (int) ($data['amount_minor'] ?? $eligibleMinor);
+        $refundPrincipalMinor = $milestone
+            ? (int) ($data['amount_minor'] ?? $milestone->remainingAmountMinor())
+            : (int) ($data['amount_minor'] ?? $eligibleMinor);
 
         if ($refundPrincipalMinor <= 0 || $refundPrincipalMinor > $eligibleMinor) {
             throw ValidationException::withMessages([
                 'amount_minor' => ["Requested refund principal ({$refundPrincipalMinor}) exceeds available unrestricted protected balance ({$eligibleMinor})."],
+            ]);
+        }
+
+        if ($milestone && $refundPrincipalMinor > $milestone->remainingAmountMinor()) {
+            throw ValidationException::withMessages([
+                'amount_minor' => ["Requested refund principal ({$refundPrincipalMinor}) exceeds milestone remaining balance ({$milestone->remainingAmountMinor()})."],
             ]);
         }
 
@@ -785,7 +809,8 @@ class ProtectedPaymentService
             idempotencyKey: $idempotencyKey,
             actor: $actor,
             reason: (string) ($data['reason'] ?? 'Authorized refund'),
-            fromDisputeFrozen: false
+            fromDisputeFrozen: false,
+            milestoneUuid: $milestoneUuid
         );
     }
 
@@ -836,7 +861,7 @@ class ProtectedPaymentService
             $contract = $payment->escrowContract;
             $reservationKey = "relres:{$payment->protected_payment_id}:{$idempotencyKey}";
 
-            if ($contract && $this->subledgerService) {
+            if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
                 $this->subledgerService->reserveRelease(
                     contract: $contract,
                     payment: $payment,
@@ -856,7 +881,7 @@ class ProtectedPaymentService
 
             // 2b. Provider rejected the disbursement: reverse the reservation, keep funds in escrow.
             if (($providerResult['executed'] ?? false) === false) {
-                if ($contract && $this->subledgerService) {
+                if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
                     $this->subledgerService->reverseReleaseReservation(
                         contract: $contract,
                         payment: $payment,
@@ -925,7 +950,7 @@ class ProtectedPaymentService
                 ]);
             }
 
-            if ($contract && $this->subledgerService) {
+            if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
                 $this->subledgerService->confirmRelease(
                     contract: $contract,
                     amountMinor: $releasePrincipalMinor,
@@ -975,7 +1000,8 @@ class ProtectedPaymentService
         string $idempotencyKey,
         ?User $actor = null,
         string $reason = 'Authorized refund',
-        bool $fromDisputeFrozen = false
+        bool $fromDisputeFrozen = false,
+        ?string $milestoneUuid = null
     ): array {
         return DB::transaction(function () use (
             $payment,
@@ -983,7 +1009,8 @@ class ProtectedPaymentService
             $idempotencyKey,
             $actor,
             $reason,
-            $fromDisputeFrozen
+            $fromDisputeFrozen,
+            $milestoneUuid
         ): array {
             $payment = ProtectedPayment::with('feeQuote')->lockForUpdate()->findOrFail($payment->id);
 
@@ -1012,6 +1039,21 @@ class ProtectedPaymentService
                 'disputed_amount_minor' => $newDisputed,
             ]);
 
+            // 2b. Reserve the refund in the escrow subledger before the provider call
+            //     so the money can neither be released nor refunded twice in flight.
+            $contract = $payment->escrowContract;
+            $refundReservationKey = "rfdres:{$payment->protected_payment_id}:{$idempotencyKey}";
+
+            if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+                $this->subledgerService->reserveRefund(
+                    contract: $contract,
+                    amountMinor: $refundPrincipalMinor,
+                    baseKey: $refundReservationKey,
+                    milestoneUuid: $milestoneUuid,
+                    actorUserId: $actor?->id
+                );
+            }
+
             // 3. Execute refund instruction with licensed provider
             $providerResult = $this->providerAdapter->executeRefund(
                 payment: $payment,
@@ -1019,6 +1061,27 @@ class ProtectedPaymentService
                 amountMinor: $refundBreakdown['total_buyer_refund_minor'],
                 idempotencyKey: $idempotencyKey
             );
+
+            // 3b. Provider rejected the refund: release the reservation, funds stay protected.
+            if (($providerResult['executed'] ?? true) === false) {
+                if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+                    $this->subledgerService->reverseRefundReservation(
+                        contract: $contract,
+                        amountMinor: $refundPrincipalMinor,
+                        baseKey: $refundReservationKey,
+                        milestoneUuid: $milestoneUuid
+                    );
+                }
+
+                $payment->update([
+                    'protected_balance_minor' => (int) $payment->protected_balance_minor + $refundPrincipalMinor,
+                    'reserved_refund_minor' => max(0, (int) $payment->reserved_refund_minor - $refundPrincipalMinor),
+                ]);
+
+                throw new \DomainException(
+                    'Provider rejected the refund instruction (' . ($providerResult['raw_status'] ?? 'UNKNOWN') . '). Funds remain protected; retry later.'
+                );
+            }
 
             // 4. Post balanced double-entry refund journal in M08
             $journal = $this->ledgerService->postProtectedRefund(
@@ -1047,6 +1110,35 @@ class ProtectedPaymentService
                 'refunded_at' => now(),
                 'state_version' => (int) $payment->state_version + 1,
             ]);
+
+            if ($milestoneUuid !== null) {
+                $scopedMilestone = ProtectedPaymentMilestone::where('protected_payment_id', $payment->id)
+                    ->where('milestone_id', $milestoneUuid)
+                    ->first();
+
+                if ($scopedMilestone) {
+                    $msRefunded = (int) $scopedMilestone->refunded_amount_minor + $refundPrincipalMinor;
+                    $scopedMilestone->update([
+                        'refunded_amount_minor' => $msRefunded,
+                        'status' => $msRefunded >= (int) $scopedMilestone->amount_minor ? 'REFUNDED' : 'PARTIALLY_REFUNDED',
+                        'completed_at' => $msRefunded >= (int) $scopedMilestone->amount_minor ? now() : null,
+                    ]);
+                }
+            }
+
+            if ($contract && $this->subledgerService && !$fromDisputeFrozen) {
+                $this->subledgerService->confirmRefund(
+                    contract: $contract,
+                    payment: $payment,
+                    amountMinor: $refundPrincipalMinor,
+                    baseKey: $refundReservationKey,
+                    milestoneUuid: $milestoneUuid,
+                    meta: [
+                        'ledger_journal_id' => $journal->id,
+                        'reference' => (string) ($contract->reference ?? $payment->reference),
+                    ]
+                );
+            }
 
             $freshPayment = $payment->fresh(['feeQuote', 'merchant.businessProfile', 'buyer', 'milestones']);
             if (!$freshPayment->verifyConservationInvariant()) {

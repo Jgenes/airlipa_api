@@ -56,6 +56,7 @@ class SubledgerService
                 'held_minor',
                 'paid_out_minor',
                 'refunded_minor',
+                'reduced_minor',
             ],
             default => [],
         };
@@ -494,7 +495,13 @@ class SubledgerService
                 [
                     'currency' => $account->currency,
                     'balance_minor' => (int) $account->funded_minor - (int) $account->paid_out_minor - (int) $account->refunded_minor,
-                    'metadata' => ['account_id' => $account->account_id, 'role' => $account->role],
+                    'metadata' => [
+                        'account_id' => $account->account_id,
+                        'role' => $account->role,
+                        'entitled_minor' => (int) $account->entitled_minor,
+                        'held_minor' => (int) $account->held_minor,
+                        'reduced_minor' => (int) $account->reduced_minor,
+                    ],
                 ]
             );
             $written++;
@@ -751,5 +758,305 @@ class SubledgerService
                 $meta + ['reason_code' => 'PAYOUT_FAILED_REVERSAL', 'idempotency_key' => $baseKey . ':party']
             );
         });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Phase 4 - Dispute freezes and refunds
+    |--------------------------------------------------------------------------
+    | Frozen money is still customer money: DISPUTE_OPENED moves available ->
+    | frozen (never out of the contract), and resolution returns it to exactly
+    | one of released / refunded / available so conservation always holds.
+    */
+
+    /**
+     * DISPUTE_OPENED: ring-fence the disputed amount inside the contract.
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function freezeForDispute(EscrowContract $contract, int $amountMinor, string $baseKey, ?int $actorUserId = null, array $meta = []): void
+    {
+        $account = $this->accountFor($contract);
+
+        if (!$account) {
+            return;
+        }
+
+        $this->transferBucket(
+            SubledgerType::Contract,
+            $account,
+            'available_minor',
+            'frozen_minor',
+            $amountMinor,
+            $meta + [
+                'reason_code' => 'DISPUTE_OPENED',
+                'actor_user_id' => $actorUserId,
+                'idempotency_key' => $baseKey . ':contract',
+            ]
+        );
+    }
+
+    /**
+     * DISPUTE_RESOLVED: split a frozen amount into a released part (to the
+     * seller) and/or a refunded part (to the buyer).
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function settleDisputeHold(
+        EscrowContract $contract,
+        int $releasedMinor,
+        int $refundedMinor,
+        string $baseKey,
+        ?int $actorUserId = null,
+        array $meta = [],
+        ?ProtectedPayment $payment = null
+    ): void {
+        $account = $this->accountFor($contract);
+
+        if (!$account) {
+            return;
+        }
+
+        $meta += ['reason_code' => 'DISPUTE_RESOLVED', 'actor_user_id' => $actorUserId];
+
+        if ($releasedMinor > 0) {
+            $this->transferBucket(
+                SubledgerType::Contract,
+                $account,
+                'frozen_minor',
+                'released_minor',
+                $releasedMinor,
+                $meta + ['idempotency_key' => $baseKey . ':released']
+            );
+        }
+
+        if ($refundedMinor > 0) {
+            $this->transferBucket(
+                SubledgerType::Contract,
+                $account,
+                'frozen_minor',
+                'refunded_minor',
+                $refundedMinor,
+                $meta + ['idempotency_key' => $baseKey . ':refunded']
+            );
+        }
+
+        $this->assertContractConservation($account->refresh());
+
+        if ($payment) {
+            $sellerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->merchant_id)
+                ->where('role', 'SELLER')
+                ->first();
+
+            $buyerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->buyer_id)
+                ->where('role', 'BUYER')
+                ->first();
+
+            if ($sellerAccount && $releasedMinor > 0 && (int) $sellerAccount->entitled_minor >= $releasedMinor) {
+                $this->transferBucket(
+                    SubledgerType::Party,
+                    $sellerAccount,
+                    'entitled_minor',
+                    'held_minor',
+                    $releasedMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':party-held']
+                );
+            }
+
+            if ($sellerAccount && $refundedMinor > 0 && (int) $sellerAccount->entitled_minor >= $refundedMinor) {
+                $this->transferBucket(
+                    SubledgerType::Party,
+                    $sellerAccount,
+                    'entitled_minor',
+                    'reduced_minor',
+                    $refundedMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':party-reduced']
+                );
+            }
+
+            if ($buyerAccount && $refundedMinor > 0 && (int) $buyerAccount->funded_minor >= $refundedMinor) {
+                $this->transferBucket(
+                    SubledgerType::Party,
+                    $buyerAccount,
+                    'funded_minor',
+                    'refunded_minor',
+                    $refundedMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':party-refunded']
+                );
+            }
+        }
+    }
+
+    /**
+     * REFUND_REQUESTED: reserve the amount so it cannot be released while the
+     * refund is in flight (available -> pending_refund).
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function reserveRefund(
+        EscrowContract $contract,
+        int $amountMinor,
+        string $baseKey,
+        ?string $milestoneUuid = null,
+        ?int $actorUserId = null,
+        array $meta = []
+    ): void {
+        $account = $this->accountFor($contract);
+
+        if (!$account) {
+            return;
+        }
+
+        $meta += ['reason_code' => 'REFUND_REQUESTED', 'actor_user_id' => $actorUserId];
+
+        $this->transferBucket(
+            SubledgerType::Contract,
+            $account,
+            'available_minor',
+            'pending_refund_minor',
+            $amountMinor,
+            $meta + ['idempotency_key' => $baseKey . ':contract']
+        );
+
+        if ($milestoneUuid !== null) {
+            $milestoneAccount = MilestoneSubledgerAccount::where('milestone_id', $milestoneUuid)->first();
+
+            if ($milestoneAccount) {
+                $this->transferBucket(
+                    SubledgerType::Milestone,
+                    $milestoneAccount,
+                    'available_minor',
+                    'pending_release_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':milestone']
+                );
+            }
+        }
+    }
+
+    /**
+     * REFUND_SUCCEEDED: pending_refund -> refunded on contract + milestone, and
+     * the buyer's party position moves funded -> refunded.
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function confirmRefund(
+        EscrowContract $contract,
+        ProtectedPayment $payment,
+        int $amountMinor,
+        string $baseKey,
+        ?string $milestoneUuid = null,
+        array $meta = []
+    ): void {
+        DB::transaction(function () use ($contract, $payment, $amountMinor, $baseKey, $milestoneUuid, $meta): void {
+            $meta += ['reason_code' => 'REFUND_SUCCEEDED'];
+
+            $account = $this->accountFor($contract);
+
+            if ($account) {
+                $this->transferBucket(
+                    SubledgerType::Contract,
+                    $account,
+                    'pending_refund_minor',
+                    'refunded_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':contract']
+                );
+            }
+
+            if ($milestoneUuid !== null) {
+                $milestoneAccount = MilestoneSubledgerAccount::where('milestone_id', $milestoneUuid)->first();
+
+                if ($milestoneAccount) {
+                    $this->transferBucket(
+                        SubledgerType::Milestone,
+                        $milestoneAccount,
+                        'pending_release_minor',
+                        'refunded_minor',
+                        $amountMinor,
+                        $meta + ['idempotency_key' => $baseKey . ':milestone']
+                    );
+                }
+            }
+
+            $buyerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->buyer_id)
+                ->where('role', 'BUYER')
+                ->first();
+
+            if ($buyerAccount && (int) $buyerAccount->funded_minor >= $amountMinor) {
+                $this->transferBucket(
+                    SubledgerType::Party,
+                    $buyerAccount,
+                    'funded_minor',
+                    'refunded_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':party']
+                );
+            }
+
+            $sellerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->merchant_id)
+                ->where('role', 'SELLER')
+                ->first();
+
+            if ($sellerAccount && (int) $sellerAccount->entitled_minor >= $amountMinor) {
+                $this->transferBucket(
+                    SubledgerType::Party,
+                    $sellerAccount,
+                    'entitled_minor',
+                    'reduced_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':party-seller']
+                );
+            }
+        });
+    }
+
+    /**
+     * Refund failed at the provider: pending_refund -> available (reverse only).
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function reverseRefundReservation(
+        EscrowContract $contract,
+        int $amountMinor,
+        string $baseKey,
+        ?string $milestoneUuid = null,
+        array $meta = []
+    ): void {
+        $account = $this->accountFor($contract);
+
+        if (!$account) {
+            return;
+        }
+
+        $meta += ['reason_code' => 'REFUND_FAILED_REVERSAL'];
+
+        $this->transferBucket(
+            SubledgerType::Contract,
+            $account,
+            'pending_refund_minor',
+            'available_minor',
+            $amountMinor,
+            $meta + ['idempotency_key' => $baseKey . ':contract']
+        );
+
+        if ($milestoneUuid !== null) {
+            $milestoneAccount = MilestoneSubledgerAccount::where('milestone_id', $milestoneUuid)->first();
+
+            if ($milestoneAccount) {
+                $this->transferBucket(
+                    SubledgerType::Milestone,
+                    $milestoneAccount,
+                    'pending_release_minor',
+                    'available_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':milestone']
+                );
+            }
+        }
     }
 }

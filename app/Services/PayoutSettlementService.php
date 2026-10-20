@@ -123,7 +123,7 @@ class PayoutSettlementService
         return DB::transaction(function () use ($payment, $actor, $idempotencyKey, $payoutAccountId) {
             $lockedPayment = ProtectedPayment::where('id', $payment->id)->lockForUpdate()->firstOrFail();
 
-            if ($lockedPayment->dispute_status === DisputeStatus::Open) {
+            if (in_array($lockedPayment->dispute_status, [DisputeStatus::OpenFrozen, DisputeStatus::UnderReview, DisputeStatus::Appealed], true)) {
                 throw new ConflictHttpException('Payout settlement is blocked while a dispute is open on this Protected Payment (FR-014).');
             }
 

@@ -369,6 +369,91 @@ class ProtectedPaymentController extends Controller
     }
 
     /**
+     * Request a full, partial or milestone-scoped refund (Module 6).
+     * POST /api/v1/protected-payments/{id}/refunds
+     */
+    public function requestRefund(Request $request, string $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'amount_minor' => ['nullable', 'integer', 'min:1'],
+            'milestone_id' => ['nullable', 'string', 'max:64'],
+            'reason' => ['required', 'string', 'max:1000'],
+            'step_up_password' => ['required', 'string'],
+            'destination_method' => ['nullable', 'string', 'in:ORIGINAL_METHOD,WALLET,BANK'],
+            'idempotency_key' => ['nullable', 'string', 'max:128'],
+        ]);
+
+        $payment = $this->resolveAuthorizedPayment($request, $id);
+
+        $idempotencyKey = (string) ($request->header('Idempotency-Key') ?: ($validated['idempotency_key'] ?? ''));
+        if ($idempotencyKey === '') {
+            $idempotencyKey = 'rfd_' . Str::lower(Str::ulid());
+        }
+
+        $result = app(\App\Services\RefundService::class)->requestRefund(
+            payment: $payment,
+            actor: $request->user(),
+            data: $validated,
+            idempotencyKey: $idempotencyKey
+        );
+
+        $refund = $result['refund_request'];
+
+        return ApiResponse::success(
+            message: $result['idempotent_replay']
+                ? 'Idempotent replay: returning the existing refund request.'
+                : 'Refund executed to the buyer using the original payment method.',
+            data: [
+                'idempotent_replay' => $result['idempotent_replay'],
+                'refund' => [
+                    'refund_id' => $refund->refund_id,
+                    'refund_reference' => $refund->refund_reference,
+                    'scope' => $refund->scope?->value,
+                    'status' => $refund->status?->value,
+                    'principal_minor' => (int) $refund->principal_minor,
+                    'fee_refund_minor' => (int) $refund->fee_refund_minor,
+                    'tax_refund_minor' => (int) $refund->tax_refund_minor,
+                    'total_refund_minor' => (int) $refund->total_refund_minor,
+                    'destination_method' => $refund->destination_method,
+                    'milestone_id' => $refund->milestone_id,
+                    'provider_refund_reference' => $refund->provider_refund_reference,
+                ],
+                'agreement' => new ProtectedPaymentResource($payment->fresh(['feeQuote', 'merchant.businessProfile', 'buyer', 'milestones'])),
+            ],
+            nextStep: 'view_receipt',
+            status: 200
+        );
+    }
+
+    /**
+     * Refund history for an agreement (Module 6).
+     * GET /api/v1/protected-payments/{id}/refunds
+     */
+    public function refundHistory(Request $request, string $id): JsonResponse
+    {
+        $payment = $this->resolveAuthorizedPayment($request, $id);
+
+        $refunds = app(\App\Services\RefundService::class)->historyFor($payment);
+
+        return ApiResponse::success(
+            message: 'Refund history retrieved.',
+            data: $refunds->map(fn ($refund): array => [
+                'refund_id' => $refund->refund_id,
+                'refund_reference' => $refund->refund_reference,
+                'scope' => $refund->scope?->value,
+                'status' => $refund->status?->value,
+                'principal_minor' => (int) $refund->principal_minor,
+                'total_refund_minor' => (int) $refund->total_refund_minor,
+                'milestone_id' => $refund->milestone_id,
+                'reason' => $refund->reason,
+                'created_at' => $refund->created_at?->toIso8601String(),
+            ])->values(),
+            nextStep: null,
+            status: 200
+        );
+    }
+
+    /**
      * Retrieve the canonical verifiable receipt for a Protected Payment (FR-023).
      * GET /api/v1/protected-payments/{id}/receipt
      */

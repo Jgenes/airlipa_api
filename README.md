@@ -355,6 +355,17 @@ Phase 3 completes the outbound side of escrow: money can only leave the pooled S
 
 ---
 
+## Service 6: Disputes, Appeals & Refunds (Phase 4)
+
+- **Freeze is real**: opening a dispute posts the `DISPUTE_FREEZE` GL journal *and* moves the disputed amount `available -> frozen` in the contract subledger, records a `dispute_holds` row, and blocks payout settlement (409) until resolved.
+- **Timeline + chat**: every case carries an append-only chronological record - system events (`TIMELINE`), party/admin chat (`MESSAGE`, optional staff-only `internal` notes), decisions (`DECISION`) and appeals (`APPEAL`). Endpoints: `GET /disputes/{caseId}/timeline`, `POST /disputes/{caseId}/messages`.
+- **Mediator decisions** (`POST /admin/disputes/{caseId}/resolve`): `FULL_REFUND_BUYER`, `FULL_RELEASE_MERCHANT` or a `PARTIAL_SPLIT` whose legs must sum to the frozen amount. Execution settles the hold `frozen -> released / refunded` and keeps full conservation; segregation of duties is enforced (no party, no case opener, no self-review).
+- **One appeal** (`POST /disputes/{caseId}/appeal`): only parties, only inside the configured window, only once. An appealed case is locked against further financial decisions; an independent reviewer (`POST /admin/disputes/{caseId}/appeal-decision`) upholds (`CLOSED`) or escalates (`UNDER_REVIEW`). Money already paid out is never silently rewritten - changes require reversal postings.
+- **Refunds** (`POST /protected-payments/{id}/refunds`, `GET .../refunds`): full, partial or milestone-scoped, defaulting to the buyer's original Selcom method. Reserved `available -> pending_refund` before the provider call, then `pending_refund -> refunded` with the buyer's party position moving `funded -> refunded` and the seller's entitlement reduced. Provider rejection reverses the reservation (reversal-only, no edits). Each refund is tracked as a `RefundRequest` with its own idempotency key.
+- **PDF case file** (`GET /disputes/{caseId}/case-file`): dependency-free PDF 1.4 dossier (parties, amounts, decision, appeal state, full timeline) with a SHA-256 integrity digest returned in `X-Case-File-SHA256`.
+
+---
+
 ## Running Automated Feature Tests
 
 Execute the Pest test suite:

@@ -182,12 +182,21 @@ Route::prefix('v1')->group(function () {
                 Route::post('{id}/settle-payout', [PayoutSettlementController::class, 'settlePayout']);
                 Route::get('{id}/receipt', [ProtectedPaymentController::class, 'receipt']);
                 Route::get('{id}/journals', [ProtectedPaymentController::class, 'journals']);
+                Route::post('{id}/refunds', [ProtectedPaymentController::class, 'requestRefund'])
+                    ->middleware('throttle:10,1');
+                Route::get('{id}/refunds', [ProtectedPaymentController::class, 'refundHistory']);
                 Route::post('{id}/disputes', [DisputeController::class, 'store']);
             });
 
             // M11: Disputes & Customer Protection
             Route::get('disputes/{caseId}', [DisputeController::class, 'show']);
             Route::post('disputes/{caseId}/resolve', [DisputeController::class, 'resolve']);
+            Route::get('disputes/{caseId}/timeline', [DisputeController::class, 'timeline']);
+            Route::post('disputes/{caseId}/messages', [DisputeController::class, 'storeMessage'])
+                ->middleware('throttle:30,1');
+            Route::post('disputes/{caseId}/appeal', [DisputeController::class, 'appeal'])
+                ->middleware('throttle:5,1');
+            Route::get('disputes/{caseId}/case-file', [DisputeController::class, 'caseFile']);
 
             // M14: Merchant Payout Accounts & Settlements
             Route::get('payout-accounts', [PayoutSettlementController::class, 'indexAccounts']);
@@ -226,8 +235,9 @@ Route::prefix('v1')->group(function () {
         Route::patch('providers/{providerCode}/status', [ProviderWebhookController::class, 'updateCapabilityStatus']);
         Route::patch('providers/{providerCode}', [ProviderWebhookController::class, 'updateCapabilityStatus']);
 
-        // M11: Dispute Analyst Resolution
+        // M11: Dispute Analyst Resolution & Appeals
         Route::post('disputes/{caseId}/resolve', [DisputeController::class, 'resolve']);
+        Route::post('disputes/{caseId}/appeal-decision', [DisputeController::class, 'decideAppeal']);
 
         // M09: 3-Way Reconciliation Runs & Exceptions Queue
         Route::post('reconciliation/runs', [AdminOperationsController::class, 'executeReconciliationRun']);
