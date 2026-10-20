@@ -134,7 +134,11 @@ class ContractShareService
     public function issueToken(int $contractId): array
     {
         $expiresAt = now()->addHours((int) config('escrow_contract.share_token_ttl_hours', 72));
-        $body = $contractId . '.' . $expiresAt->getTimestamp();
+
+        // The nonce keeps tokens unique per share row. Without it, every channel
+        // shared in the same second produced an identical token and collided on
+        // the contract_shares.token unique index.
+        $body = $contractId . '.' . $expiresAt->getTimestamp() . '.' . Str::lower(Str::random(16));
 
         return [$body . '.' . hash_hmac('sha256', $body, $this->signingKey()), $expiresAt];
     }
@@ -146,12 +150,20 @@ class ContractShareService
     {
         $parts = explode('.', $token);
 
-        if (count($parts) !== 3) {
+        // Four parts is the current format (id.expiry.nonce.signature). Three is
+        // the pre-nonce format, still accepted so links already in the wild keep
+        // working until they expire.
+        if (count($parts) === 4) {
+            [$contractId, $expiry, $nonce, $signature] = $parts;
+            $body = $contractId . '.' . $expiry . '.' . $nonce;
+        } elseif (count($parts) === 3) {
+            [$contractId, $expiry, $signature] = $parts;
+            $body = $contractId . '.' . $expiry;
+        } else {
             throw new NotFoundHttpException('Contract share link not found.');
         }
 
-        [$contractId, $expiry, $signature] = $parts;
-        $expected = hash_hmac('sha256', $contractId . '.' . $expiry, $this->signingKey());
+        $expected = hash_hmac('sha256', $body, $this->signingKey());
 
         if (!hash_equals($expected, $signature)) {
             throw new NotFoundHttpException('Contract share link not found.');

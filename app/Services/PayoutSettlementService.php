@@ -119,7 +119,7 @@ class PayoutSettlementService
             ];
         }
 
-        return DB::transaction(function () use ($payment, $actor, $idempotencyKey, $payoutAccountId) {
+        return DB::transaction(function () use ($payment, $actor, $idempotencyKey, $payoutAccountId, $data) {
             $lockedPayment = ProtectedPayment::where('id', $payment->id)->lockForUpdate()->firstOrFail();
 
             app(\App\Services\PayoutFreezeService::class)->assertNotFrozen();

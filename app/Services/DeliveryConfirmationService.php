@@ -8,7 +8,6 @@ use App\Models\DeliveryConfirmationToken;
 use App\Models\ProtectedPayment;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
@@ -90,7 +89,10 @@ class DeliveryConfirmationService
                 ->where('status', 'ACTIVE')
                 ->lockForUpdate()
                 ->get()
-                ->first(fn (DeliveryConfirmationToken $candidate): bool => Hash::check($token, $candidate->token_hash));
+                ->first(fn (DeliveryConfirmationToken $candidate): bool => hash_equals(
+                    (string) $candidate->token_hash,
+                    hash('sha256', $token)
+                ));
 
             if (!$record) {
                 throw new NotFoundHttpException('This delivery confirmation code is not valid for this agreement.');

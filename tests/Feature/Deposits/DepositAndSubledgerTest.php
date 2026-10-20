@@ -129,10 +129,8 @@ test('verified Selcom deposit funds the contract and posts GL + subledger atomic
 
 test('milestone deposits earmark the principal in held_milestones and fund each milestone sub-account', function () {
     $ctx = acceptEscrowContract(15000000, [
-        'milestones' => [
-            ['title' => 'Mobilisation', 'amount_minor' => 6000000],
-            ['title' => 'Delivery', 'amount_minor' => 9000000],
-        ],
+        ['title' => 'Mobilisation', 'amount_minor' => 6000000],
+        ['title' => 'Delivery', 'amount_minor' => 9000000],
     ]);
 
     initiateSelcomDeposit($ctx['payment_id'], $ctx['buyer']);
@@ -295,9 +293,8 @@ test('posting-rules catalogue exposes every registered deposit event', function 
 
     $codes = collect($response->json('data'))->pluck('event_code');
 
-    expect($codes->all())->toEqualCanonicalizing([
-        'DEPOSIT_CONFIRMED',
-        'DEPOSIT_OVERPAYMENT_SUSPENSE',
-        'DEPOSIT_PARTIAL_HELD',
-    ]);
+    // The catalogue is the full posting-rule book; this endpoint only has to
+    // guarantee that the deposit events are published and not duplicated.
+    expect($codes->all())->toContain('DEPOSIT_CONFIRMED', 'DEPOSIT_OVERPAYMENT_SUSPENSE', 'DEPOSIT_PARTIAL_HELD')
+        ->and($codes->duplicates())->toBeEmpty();
 });

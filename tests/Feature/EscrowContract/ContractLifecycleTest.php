@@ -50,10 +50,10 @@ test('initiator can draft, edit, share and counterparty can accept with OTP e-si
         ->assertJsonPath('data.title', '200W Solar Panel Kit + Inverter');
 
     // Share through link, WhatsApp and QR
-    $shareResponse = Sanctum::actingAs($initiator, ['*']);
-    $this->postJson("/api/v1/contracts/{$contractId}/share", [
-            'channels' => ['LINK', 'WHATSAPP', 'QR'],
-        ])
+    Sanctum::actingAs($initiator, ['*']);
+    $shareResponse = $this->postJson("/api/v1/contracts/{$contractId}/share", [
+        'channels' => ['LINK', 'WHATSAPP', 'QR'],
+    ])
         ->assertStatus(200)
         ->assertJsonPath('data.contract.status', 'SHARED');
 
@@ -138,8 +138,8 @@ test('milestone contracts open one milestone subledger per milestone on acceptan
 
     expect($draft['milestones'])->toHaveCount(2);
 
-    $shareResponse = Sanctum::actingAs($initiator, ['*']);
-    $this->postJson("/api/v1/contracts/{$draft['id']}/share", ['channels' => ['LINK']])
+    Sanctum::actingAs($initiator, ['*']);
+    $shareResponse = $this->postJson("/api/v1/contracts/{$draft['id']}/share", ['channels' => ['LINK']])
         ->assertStatus(200);
 
     $token = $shareResponse->json('data.shares.0.token');
@@ -187,8 +187,8 @@ test('counterparty can reject a shared contract and initiator can cancel drafts'
 
     $draft = createDraftContract($initiator);
 
-    $shareResponse = Sanctum::actingAs($initiator, ['*']);
-    $this->postJson("/api/v1/contracts/{$draft['id']}/share", ['channels' => ['LINK']])
+    Sanctum::actingAs($initiator, ['*']);
+    $shareResponse = $this->postJson("/api/v1/contracts/{$draft['id']}/share", ['channels' => ['LINK']])
         ->assertStatus(200);
 
     $token = $shareResponse->json('data.shares.0.token');

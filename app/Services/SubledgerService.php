@@ -276,7 +276,15 @@ class SubledgerService
             throw new DomainException("Bucket pair {$fromBucket}->{$toBucket} is not permitted for {$type->value}.");
         }
 
-        $baseKey = (string) ($meta['idempotency_key'] ?? throw new DomainException('Subledger transfers require an idempotency key.'));
+        $idempotencyKey = (string) ($meta['idempotency_key'] ?? throw new DomainException('Subledger transfers require an idempotency key.'));
+
+        // Callers pass one base key per business operation (a release, a refund,
+        // a payout). The same base key is reused by the reserve step, the confirm
+        // step and the reversal, so the reason code - not the base key alone -
+        // is what makes an operation unique. Without it the confirm and the
+        // reversal read the reserve's entries as duplicates and quietly do
+        // nothing, leaving money stuck in pending buckets.
+        $baseKey = $idempotencyKey . ':' . (string) ($meta['reason_code'] ?? 'TRANSFER');
 
         return DB::transaction(function () use ($type, $account, $fromBucket, $toBucket, $amountMinor, $meta, $baseKey): Model {
             /** @var Model $locked */

@@ -122,10 +122,8 @@ test('release reserves then confirms funds in the contract subledger and blocks 
 
 test('milestone release moves only that milestone subledger and keeps conservation', function () {
     $fixture = fundedContractFixture(12000000, [
-        'milestones' => [
-            ['title' => 'Deposit', 'amount_minor' => 4000000],
-            ['title' => 'Handover', 'amount_minor' => 8000000],
-        ],
+        ['title' => 'Deposit', 'amount_minor' => 4000000],
+        ['title' => 'Handover', 'amount_minor' => 8000000],
     ]);
 
     $milestone = MilestoneSubledgerAccount::where('escrow_contract_id', $fixture['contract_id'])

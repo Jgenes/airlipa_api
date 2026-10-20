@@ -21,14 +21,22 @@ uses(RefreshDatabase::class);
  */
 function phase5Fixture(int $principalMinor = 8000000): array
 {
-    $seller = User::factory()->kycVerified()->create(['phone' => '+255712345678', 'first_name' => 'Neema', 'last_name' => 'Msuya']);
-    $buyer = User::factory()->kycVerified()->create(['phone' => '+255711111111', 'first_name' => 'Juma', 'last_name' => 'Ally']);
+    // Phones come from a per-call sequence: the escrow flow matches a
+    // counterparty by phone, so reusing a hard-coded number makes the second
+    // fixture in a process collide on users.phone.
+    $GLOBALS['phase5_fixture_sequence'] = ($GLOBALS['phase5_fixture_sequence'] ?? 0) + 1;
+    $sequence = $GLOBALS['phase5_fixture_sequence'];
+    $sellerPhone = '+2557' . str_pad((string) (1000000 + $sequence), 8, '0', STR_PAD_LEFT);
+    $buyerPhone = '+2557' . str_pad((string) (2000000 + $sequence), 8, '0', STR_PAD_LEFT);
+
+    $seller = User::factory()->kycVerified()->create(['phone' => $sellerPhone, 'first_name' => 'Neema', 'last_name' => 'Msuya']);
+    $buyer = User::factory()->kycVerified()->create(['phone' => $buyerPhone, 'first_name' => 'Juma', 'last_name' => 'Ally']);
 
     Sanctum::actingAs($seller, ['*']);
     $contract = test()->postJson('/api/v1/contracts', [
         'initiator_role' => 'SELLER',
         'counterparty_name' => 'Juma Ally',
-        'counterparty_phone' => '+255711111111',
+        'counterparty_phone' => $buyerPhone,
         'title' => 'Phase 5 fixture',
         'description' => 'Goods under pooled Selcom escrow custody.',
         'amount_minor' => $principalMinor,
@@ -273,7 +281,7 @@ test('buyers and sellers can each rate a contract exactly once', function () {
 
     $reputation = $this->getJson('/api/v1/users/' . $fixture['seller']->id . '/reputation')->assertStatus(200);
     expect($reputation->json('data.rating_count'))->toBe(1)
-        ->and($reputation->json('data.average_score'))->toBe(5.0);
+        ->and($reputation->json('data.average_score'))->toBe(5); // JSON drops the .0 of round(5.0, 2)
 });
 
 test('a stranger cannot rate a contract they are not party to', function () {

@@ -147,7 +147,7 @@ class PayoutSettlementController extends Controller
                 ],
             ],
             nextStep: 'completed',
-            status: $result['idempotent_replay'] ? 200 : 201
+            status: 200
         );
     }
 
