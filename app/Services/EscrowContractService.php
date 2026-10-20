@@ -331,9 +331,9 @@ class EscrowContractService
                 ['contract_id' => $locked->contract_id, 'protected_payment_id' => $payment->protected_payment_id],
                 $initiator,
                 'Contract accepted',
-                sprintf('%s accepted contract %s. Deposit instructions are now active.', $user->full_name ?? $user->name, $locked->reference),
+                sprintf('%s accepted contract %s. Deposit instructions are now active.', $user->full_name, $locked->reference),
                 'Mkataba umekubaliwa',
-                sprintf('%s amekubali mkataba %s. Maelekezo ya amana yamewashwa.', $user->full_name ?? $user->name, $locked->reference)
+                sprintf('%s amekubali mkataba %s. Maelekezo ya amana yamewashwa.', $user->full_name, $locked->reference)
             );
 
             AuditLogService::log('escrow_contract_accepted', $user, [
@@ -372,9 +372,9 @@ class EscrowContractService
             ['contract_id' => $contract->contract_id, 'reason' => $reason],
             $contract->initiator,
             'Contract rejected',
-            sprintf('%s rejected contract %s.', $user->full_name ?? $user->name, $contract->reference),
+            sprintf('%s rejected contract %s.', $user->full_name, $contract->reference),
             'Mkataba umekataliwa',
-            sprintf('%s amekataa mkataba %s.', $user->full_name ?? $user->name, $contract->reference)
+            sprintf('%s amekataa mkataba %s.', $user->full_name, $contract->reference)
         );
 
         AuditLogService::log('escrow_contract_rejected', $user, ['contract_id' => $contract->contract_id, 'reason' => $reason]);
@@ -423,9 +423,9 @@ class EscrowContractService
                 ['contract_id' => $contract->contract_id, 'version' => $nextVersion],
                 $contract->initiator,
                 'Changes requested',
-                sprintf('%s proposed changes (v%d) on contract %s.', $user->full_name ?? $user->name, $nextVersion, $contract->reference),
+                sprintf('%s proposed changes (v%d) on contract %s.', $user->full_name, $nextVersion, $contract->reference),
                 'Mabadiliko yameombwa',
-                sprintf('%s amependekeza mabadiliko (v%d) kwenye mkataba %s.', $user->full_name ?? $user->name, $nextVersion, $contract->reference)
+                sprintf('%s amependekeza mabadiliko (v%d) kwenye mkataba %s.', $user->full_name, $nextVersion, $contract->reference)
             );
 
             AuditLogService::log('escrow_contract_changes_requested', $user, [

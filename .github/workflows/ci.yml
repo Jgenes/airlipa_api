@@ -120,7 +120,13 @@ jobs:
             echo 'Per-test failure details:'
             echo
             echo '```'
-            grep -A4 -E '^   FAILED ' "$log" | head -500
+            grep -A10 -E '^   FAILED ' "$log" | head -260
+            echo '```'
+            echo
+            echo 'Application log:'
+            echo
+            echo '```'
+            tail -c 18000 storage/logs/laravel.log 2>/dev/null || echo 'no log file'
             echo '```'
           } > "$RUNNER_TEMP/excerpt.md"
           gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" \
