@@ -1189,7 +1189,7 @@ class ProtectedPaymentService
         $isFunded = (int) $payment->funded_amount_minor > 0;
         $receiptType = $isFunded ? 'VERIFIED_PAYMENT_AND_PROTECTION_RECEIPT' : 'UNFUNDED_ORDER_AGREEMENT_SUMMARY';
 
-        return [
+        $receipt = [
             'receipt_id' => 'rcp_' . substr(hash('sha256', $payment->protected_payment_id . '|' . $payment->state_version), 0, 20),
             'receipt_type' => $receiptType,
             'is_authoritative_payment_proof' => $isFunded,
@@ -1246,6 +1246,17 @@ class ProtectedPaymentService
             'ledger_journal_ids' => $payment->journals->pluck('journal_id')->values()->all(),
             'generated_at' => now()->toIso8601String(),
         ];
+
+        // Tamper-evident receipt: the digest covers every field above, in the
+        // order they are serialised, so a downloaded receipt can be re-hashed
+        // and compared. Kept out of the hashed payload itself.
+        $receipt['conservation_invariant_valid'] = $payment->verifyConservationInvariant();
+        $receipt['receipt_verification_hash'] = hash(
+            'sha256',
+            json_encode($receipt, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+        );
+
+        return $receipt;
     }
 
     /**
