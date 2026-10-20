@@ -1,6 +1,8 @@
 <?php
 
+use App\Http\Controllers\Api\V1\AdminInsightsController;
 use App\Http\Controllers\Api\V1\AdminKybController;
+use App\Http\Controllers\Api\V1\AdminLedgerController;
 use App\Http\Controllers\Api\V1\AdminOperationsController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ContractShareController;
@@ -65,6 +67,9 @@ Route::prefix('v1')->group(function () {
     Route::get('merchants/{merchantId}/trust-profile', [MerchantTrustController::class, 'show'])
         ->name('merchants.trust-profile');
 
+    // Phase 5: public escrow reputation (ratings aggregate)
+    Route::get('users/{userId}/reputation', [AdminInsightsController::class, 'reputation'])->whereNumber('userId');
+
     Route::get('payment-links/{token}', [PaymentLinkController::class, 'preview'])
         ->name('payment-links.preview');
 
@@ -106,6 +111,10 @@ Route::prefix('v1')->group(function () {
     // Fully Authenticated User Endpoints
     // ==========================================
     Route::middleware(['auth:sanctum'])->group(function () {
+        // Phase 5: personal KYC/AML tier summary and CSV statement export
+        Route::get('me/trading-limits', [AdminInsightsController::class, 'myLimits']);
+        Route::get('reports/statements.csv', [AdminInsightsController::class, 'myStatementCsv']);
+
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::post('auth/logout-all', [AuthController::class, 'logoutAll']);
 
@@ -135,6 +144,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('/', [EscrowContractController::class, 'store']);
                 Route::get('{id}', [EscrowContractController::class, 'show'])->whereNumber('id');
                 Route::patch('{id}', [EscrowContractController::class, 'update'])->whereNumber('id');
+                Route::post('{id}/rating', [AdminInsightsController::class, 'rateContract'])->whereNumber('id');
                 Route::get('{id}/deposit-qr', [EscrowContractController::class, 'depositQr'])->whereNumber('id');
                 Route::post('{id}/share', [EscrowContractController::class, 'share'])->whereNumber('id');
                 Route::post('{id}/versions/{version}/approve', [EscrowContractController::class, 'approveVersion'])
@@ -250,6 +260,28 @@ Route::prefix('v1')->group(function () {
 
         // M16: Trial Balance & Regulatory Safeguarding Proof Pack
         Route::get('reports/trial-balance', [ReportController::class, 'trialBalance']);
+        Route::get('reports/escrow-register', [AdminInsightsController::class, 'escrowRegister']);
+        Route::get('reports/escrow-register.csv', [AdminInsightsController::class, 'escrowRegister']);
+        Route::get('reports/settlements', [AdminInsightsController::class, 'settlementRegister']);
+        Route::get('reports/settlements.csv', [AdminInsightsController::class, 'settlementRegister']);
+
+        // Phase 5: ledger explorer drill-down
+        Route::get('ledger/accounts', [AdminLedgerController::class, 'accounts']);
+        Route::get('ledger/accounts/{accountCode}', [AdminLedgerController::class, 'accountDetail']);
+        Route::get('ledger/journals/{journalId}', [AdminLedgerController::class, 'journal']);
+        Route::get('ledger/contracts/{contractId}', [AdminLedgerController::class, 'contract']);
+
+        // Phase 5: reconciliation dashboard, invariant check and payout freeze control
+        Route::get('reconciliation/dashboard', [AdminLedgerController::class, 'dashboard']);
+        Route::post('reconciliation/invariant-check', [AdminLedgerController::class, 'runInvariantCheck']);
+        Route::post('reconciliation/partner-statements', [AdminLedgerController::class, 'ingestPartnerStatement']);
+        Route::post('payout-freeze', [AdminLedgerController::class, 'activateFreeze']);
+        Route::delete('payout-freeze', [AdminLedgerController::class, 'releaseFreeze']);
+
+        // Phase 5: analytics + AML tier administration
+        Route::get('analytics/overview', [AdminInsightsController::class, 'overview']);
+        Route::get('analytics/timeseries', [AdminInsightsController::class, 'timeseries']);
+        Route::patch('users/{userId}/aml-tier', [AdminInsightsController::class, 'updateAmlTier'])->whereNumber('userId');
         Route::get('reports/safeguarding-proof-pack', [ReportController::class, 'safeguardingProofPack']);
 
         // M17: Maker-Checker Dual Control & Tamper-Evident Audit Hash Chain Verification

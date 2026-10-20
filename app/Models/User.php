@@ -3,6 +3,8 @@
 namespace App\Models;
 
 use App\Enums\AccountStatus;
+use App\Enums\AmlRiskRating;
+use App\Enums\KycTier;
 use App\Enums\KybStatus;
 use App\Enums\KycStatus;
 use App\Enums\UserType;
@@ -62,6 +64,9 @@ class User extends Authenticatable
             'user_type' => UserType::class,
             'kyc_status' => KycStatus::class,
             'kyb_status' => KybStatus::class,
+            'kyc_tier' => KycTier::class,
+            'aml_risk_rating' => AmlRiskRating::class,
+            'tier_assessed_at' => 'datetime',
             'is_active' => 'boolean',
             'failed_login_attempts' => 'integer',
             'locked_until' => 'datetime',

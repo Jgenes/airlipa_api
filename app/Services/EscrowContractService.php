@@ -35,7 +35,8 @@ class EscrowContractService
         protected SubledgerService $subledgerService,
         protected OtpService $otpService,
         protected ProtectedPaymentService $protectedPaymentService,
-        protected NotificationOutboxService $outboxService
+        protected NotificationOutboxService $outboxService,
+        protected TradingLimitService $tradingLimits
     ) {}
 
     /**
@@ -43,6 +44,9 @@ class EscrowContractService
      */
     public function createDraft(User $initiator, array $data): EscrowContract
     {
+        // KYC/AML tier gate: amounts above the tier limit never reach the ledger.
+        $this->tradingLimits->assertCanCommit($initiator, (int) $data['amount_minor'], 'escrow_contract_draft');
+
         return DB::transaction(function () use ($initiator, $data): EscrowContract {
             $terms = $this->canonicalTerms($data);
 
@@ -245,6 +249,8 @@ class EscrowContractService
     {
         $contract = $share->contract;
         $this->assertCounterpartyIdentity($contract, $user);
+
+        $this->tradingLimits->assertCanCommit($user, (int) $contract->amount_minor, 'escrow_contract_acceptance');
 
         if (!$contract->isAcceptanceWindowOpen()) {
             throw new HttpException(422, 'The acceptance window for this contract is closed.');

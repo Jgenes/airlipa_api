@@ -366,6 +366,19 @@ Phase 3 completes the outbound side of escrow: money can only leave the pooled S
 
 ---
 
+## Service 7: Admin, Reconciliation & Growth Surfaces (Phase 5)
+
+- **KYC/AML tiers** (`GET /me/trading-limits`): tiers `TIER_0` (browse only) through `TIER_3` (enhanced due diligence, business KYB). Limits per tier are integer minor units in `config/aml_tiers.php`; contract creation *and* counterparty acceptance are blocked before the ledger when an amount breaches the single-transaction or rolling 30-day cap. AML high-risk users are never auto-promoted; compliance can assign a tier manually (`PATCH /admin/users/{id}/aml-tier`, audit-logged).
+- **Ledger explorer** (`/admin/ledger/accounts`, `.../accounts/{code}`, `.../journals/{id}`, `.../contracts/{id}`): drill from a control-account balance to individual postings, to the balanced journal, to the contract subledger buckets and append-only entries behind it.
+- **Reconciliation dashboard** (`GET /admin/reconciliation/dashboard`) reconciles three legs: (1) contract subledger held total, (2) GL protected + dispute-frozen liabilities, (3) the GL clearing balance against the ingested Selcom pooled-account statement, plus suspense, dispute holds, fee deferrals and trial-balance checks.
+- **Invariant check + automatic freeze** (`POST /admin/reconciliation/invariant-check`, scheduled every 30 min by `escrow:reconcile-invariant`): any breach raises a CRITICAL exception and **freezes payouts platform-wide**; every disbursement path calls `assertNotFrozen()` and returns 409. Clearing the freeze is an explicit, audited admin action (`DELETE /admin/payout-freeze`) — never automatic.
+- **Reports & CSV** (`/admin/reports/escrow-register[.csv]`, `/admin/reports/settlements[.csv]`, `/reports/statements.csv`): dependency-free RFC 4180 exports for finance, partners and regulators.
+- **Ratings** (`POST /contracts/{id}/rating`, `GET /users/{id}/reputation`): one immutable rating per party per contract, buyer-to-seller and seller-to-buyer aggregates exposed on the public trust surface.
+- **Analytics** (`/admin/analytics/overview`, `/admin/analytics/timeseries`): funnel (created → accepted → funded), volume, dispute rate and average resolution hours, payout health, tier distribution and provider mix, all derived from canonical tables so analytics can never drift from the ledger.
+- **Reminders** (`escrow:send-reminders`, hourly): bilingual EN/SW nudges for closing acceptance windows, overdue delivery, closing inspection windows and payouts awaiting retry, deduped per subject/user/day.
+
+---
+
 ## Running Automated Feature Tests
 
 Execute the Pest test suite:

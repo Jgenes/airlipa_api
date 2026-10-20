@@ -13,3 +13,9 @@ Schedule::command('escrow-contracts:expire-overdue')->hourly();
 
 // Daily close: subledger balance snapshots for reconciliation and month-end.
 Schedule::command('ledger:snapshot-subledgers')->dailyAt('23:55');
+
+// Phase 5: bilingual deadline reminders (acceptance, delivery, inspection, payout retry).
+Schedule::command('escrow:send-reminders')->hourly();
+
+// Phase 5: three-way escrow invariant check; freezes payouts automatically on breach.
+Schedule::command('escrow:reconcile-invariant')->everyThirtyMinutes();
