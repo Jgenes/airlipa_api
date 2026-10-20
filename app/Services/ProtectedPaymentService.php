@@ -353,6 +353,7 @@ class ProtectedPaymentService
                 $merchantId = (int) $data['merchant_id'];
                 $buyerId = (int) ($data['buyer_id'] ?? $initiator->id);
                 $buyer = User::findOrFail($buyerId);
+                $merchant = User::findOrFail($merchantId);
 
                 $quote = $this->pricingService->createQuote($initiator, [
                     'merchant_id' => $merchantId,
