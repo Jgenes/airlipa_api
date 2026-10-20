@@ -84,11 +84,11 @@ test('initiator can draft, edit, share and counterparty can accept with OTP e-si
         ->first()
         ->update(['code_hash' => Hash::make('424242')]);
 
-    $acceptResponse = Sanctum::actingAs($counterparty, ['*']);
-    $this->postJson("/api/v1/contracts/share/{$token}/accept", [
-            'otp_code' => '424242',
-            'full_name' => 'Neema Msuya',
-        ])
+    Sanctum::actingAs($counterparty, ['*']);
+    $acceptResponse = $this->postJson("/api/v1/contracts/share/{$token}/accept", [
+        'otp_code' => '424242',
+        'full_name' => 'Neema Msuya',
+    ])
         ->assertStatus(200)
         ->assertJsonPath('data.contract.status', 'ACCEPTED');
 

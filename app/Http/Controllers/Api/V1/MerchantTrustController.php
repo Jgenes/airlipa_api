@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\ProtectedPaymentStatus;
+use App\Enums\UserType;
 use App\Http\Controllers\Controller;
 use App\Http\Responses\ApiResponse;
 use App\Models\ProtectedPayment;
@@ -35,7 +36,7 @@ class MerchantTrustController extends Controller
                 'trading_eligibility' => [
                     'can_accept_protected_payments' => $merchant->isVerifiedForTrading(),
                     'can_receive_settlement_payouts' => $merchant->isVerifiedForTrading(),
-                    'verification_level' => $merchant->user_type->value === 'business' ? 'KYB_BUSINESS' : 'KYC_INDIVIDUAL',
+                    'verification_level' => $merchant->user_type === UserType::Business ? 'KYB_BUSINESS' : 'KYC_INDIVIDUAL',
                 ],
                 'track_record' => [
                     'total_protected_agreements' => $totalAgreements,

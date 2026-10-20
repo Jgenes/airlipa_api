@@ -350,3 +350,28 @@ test('expired delivery codes are refused', function () {
         'delivery_token' => $token,
     ])->assertStatus(409);
 });
+
+test('the protected payment service has the escrow subledger wired in and the contract link survives funding', function () {
+    $fixture = fundedContractFixture(12000000);
+
+    $payment = \App\Models\ProtectedPayment::where('protected_payment_id', $fixture['payment_id'])->firstOrFail();
+
+    expect($payment->escrow_contract_id)->toBe($fixture['contract_id'])
+        ->and($payment->escrowContract)->not->toBeNull();
+
+    $account = ContractSubledgerAccount::where('escrow_contract_id', $fixture['contract_id'])->first();
+    expect($account)->not->toBeNull()
+        ->and((int) $account->available_minor)->toBe(12000000);
+
+    $service = app(\App\Services\ProtectedPaymentService::class);
+    $property = (new \ReflectionClass($service))->getProperty('subledgerService');
+    $property->setAccessible(true);
+    $subledger = $property->getValue($service);
+
+    expect($subledger)->toBeInstanceOf(\App\Services\SubledgerService::class);
+
+    // The subledger layer itself must move buckets when asked directly.
+    $subledger->reserveRelease($payment->escrowContract, $payment, 1000000, 'diag-reserve-001');
+
+    expect((int) $account->refresh()->pending_release_minor)->toBe(1000000);
+});
