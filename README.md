@@ -403,3 +403,44 @@ php artisan test --filter=PaymentLinkAndAgreementTest
 php artisan test --filter=OrchestrationAndWebhookTest
 php artisan test --filter=LifecycleReleaseRefundDisputeTest
 ```
+
+---
+
+## Verification (no Composer required)
+
+The Pest suite is the definitive gate, but it needs `composer install` and a
+full PHP runtime. The repository also ships a four-layer ladder that runs on a
+bare checkout — no vendor directory, no extensions beyond the standard CLI:
+
+```bash
+bash tools/verify.sh            # full ladder (~2.5 min)
+bash tools/verify.sh --fast     # skip the per-file lint (~1 s)
+```
+
+If PHP or the tree-sitter grammar are installed somewhere other than `PATH`,
+point the runner at them:
+
+```bash
+PHP_BIN=/path/to/php PYTHON_BIN=/path/to/python bash tools/verify.sh
+```
+
+| Layer | Tool | What it actually proves |
+| --- | --- | --- |
+| 1. Syntax | `php -l` over `app config database routes tests bootstrap public`, then `tools/php_syntax_check.py` | Every PHP file parses under PHP 8 — including fatal errors such as a duplicated `use` import, which `php -l` reports but a bare parse check misses. The tree-sitter grammar is the fallback when no PHP binary exists. |
+| 2. Money logic | `php tools/logic_tests.php` | 10 assertions over the framework-free core: CRC16-CCITT check value, deposit/overpayment/part-payment posting rules balance and hit the right control accounts, zero-value legs are omitted, unknown events are refused, the posting-rule catalogue covers deposits, the EMVCo QR payload has the right tags and checksum, and KYC tier ranking round-trips. |
+| 3. Semantics | `python3 tools/semantic_checks.py` | Route controller classes exist, are imported in their route file, and expose the action named; `use` imports resolve to real files; enum cases referenced in code exist; Blade mail views named by Mailables exist (both `->view()` and `new Content(view:)`); `config('group.key')` groups have files; injected service methods exist on the resolved type. |
+| 4. Test suite | `vendor/bin/pest` | The Pest feature suite — skipped with a notice until `composer install` has been run. |
+
+The static layers are not decorative: each check was mutation-tested by
+injecting a realistic defect into a scratch copy of the tree and confirming it
+fails. Duplicate `use Illuminate\Support\Facades\Hash;` in
+`PayoutSettlementService` (a Zend fatal on every payout request), a renamed
+controller action, an un-imported controller, a typo in an injected-service
+method, a bad enum case, a renamed Blade view and a missing config group were
+all caught this way and fixed.
+
+CI (`.github/workflows/ci.yml`) runs the same ladder in a `static` job —
+`php -l`, logic tests, tree-sitter, semantic checks — before a PHP 8.2/8.3
+matrix installs Composer and executes `php artisan test`. The static job needs
+no `vendor/`, so a broken import or route fails the pipeline in under a minute
+instead of after a full dependency install.

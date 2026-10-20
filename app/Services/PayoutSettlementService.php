@@ -4,16 +4,15 @@ namespace App\Services;
 
 use App\Enums\DisputeStatus;
 use App\Enums\SettlementStatus;
-use App\Models\MerchantPayoutAccount;
 use App\Jobs\RetryFailedPayoutJob;
 use App\Models\ApprovalRequest;
+use App\Models\MerchantPayoutAccount;
 use App\Models\PayoutInstruction;
 use App\Models\ProtectedPayment;
 use App\Models\SettlementBatch;
 use App\Models\User;
 use App\Services\PaymentProviders\PaymentProviderAdapterInterface;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
