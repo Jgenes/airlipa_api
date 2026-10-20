@@ -300,7 +300,7 @@ test('the PDF case file downloads with a tamper-evident digest', function () {
     expect($response->headers->get('Content-Type'))->toContain('application/pdf')
         ->and($response->headers->get('X-Case-File-SHA256'))->toHaveLength(64);
 
-    expect(substr($response->streamedContent(), 0, 8))->toBe('%PDF-1.4');
+    expect(substr((string) $response->getContent(), 0, 8))->toBe('%PDF-1.4');
 
     $dispute = DisputeCase::where('case_id', $caseId)->first();
     expect($dispute->case_file_path)->not->toBeNull();

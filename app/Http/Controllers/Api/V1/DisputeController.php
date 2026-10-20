@@ -203,7 +203,7 @@ class DisputeController extends Controller
     public function decideAppeal(Request $request, string $caseId): JsonResponse
     {
         $validated = $request->validate([
-            'decision' => ['required', 'string', 'in:UPHOLD,ESCALATE,up_hold,escalate'],
+            'decision' => ['required', 'string', 'in:UPHOLD,ESCALATE'],
             'notes' => ['required', 'string', 'max:2000'],
         ]);
 
