@@ -58,6 +58,8 @@ jobs:
     name: Pest suite (PHP ${{ matrix.php }})
     runs-on: ubuntu-latest
     needs: static
+    permissions:
+      contents: write # publish the failure excerpt as a commit comment
     strategy:
       fail-fast: false
       matrix:
@@ -88,8 +90,37 @@ jobs:
           cp .env.example .env
           php artisan key:generate --no-interaction
 
+      # Failure output lives in the job log, which is not reachable from
+      # every environment (and is awkward to read on a phone). Mirror the
+      # relevant slice into a commit comment so it is always at hand.
       - name: Run the suite
-        run: php artisan test --colors=never
+        id: suite
+        run: |
+          set +e
+          php artisan test --colors=never 2>&1 | tee "$RUNNER_TEMP/pest.log"
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Publish failure excerpt
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          log="$RUNNER_TEMP/pest.log"
+          { echo "$(php artisan --version 2>/dev/null) on PHP $(php -r 'echo PHP_VERSION;')"
+            echo
+            grep -E 'FAIL|Tests:|⨯' "$log" | head -40
+            echo
+            echo '```'
+            tail -c 3000 "$log"
+            echo '```'
+          } > "$RUNNER_TEMP/excerpt.md"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" \
+            -f body="$(cat "$RUNNER_TEMP/excerpt.md")" >/dev/null \
+            && echo "failure excerpt published as a commit comment" \
+            || echo "::warning::could not publish failure excerpt"
 
       - name: Upload failure output
         if: failure()
