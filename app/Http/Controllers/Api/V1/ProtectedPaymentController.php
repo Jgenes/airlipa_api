@@ -97,6 +97,22 @@ class ProtectedPaymentController extends Controller
     }
 
     /**
+     * Dynamic deposit QR (TanQR/EMVCo) with exact amount + contract reference (Module 4).
+     * GET /api/v1/protected-payments/{id}/deposit-qr
+     */
+    public function depositQr(Request $request, string $id): JsonResponse
+    {
+        $payment = $this->resolveAuthorizedPayment($request, $id);
+
+        return ApiResponse::success(
+            message: 'Dynamic deposit QR generated. Any wallet or bank app can scan and pay.',
+            data: app(\App\Services\QrDepositService::class)->buildDepositQr($payment),
+            nextStep: 'scan_and_pay',
+            status: 200
+        );
+    }
+
+    /**
      * Initiate a payment intent and provider collection attempt (FR-007, FR-008, BPA-CH-03).
      * POST /api/v1/protected-payments/{id}/pay
      */

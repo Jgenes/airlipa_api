@@ -118,6 +118,11 @@ class ProtectedPayment extends Model
         return $this->belongsTo(ProtectedPaymentLink::class, 'payment_link_id');
     }
 
+    public function escrowContract(): BelongsTo
+    {
+        return $this->belongsTo(EscrowContract::class, 'escrow_contract_id');
+    }
+
     public function merchant(): BelongsTo
     {
         return $this->belongsTo(User::class, 'merchant_id');

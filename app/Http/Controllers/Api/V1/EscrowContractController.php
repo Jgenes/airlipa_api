@@ -137,6 +137,28 @@ class EscrowContractController extends Controller
     }
 
     /**
+     * Deposit QR for the contract's underlying Protected Payment (Module 4).
+     * GET /api/v1/contracts/{id}/deposit-qr
+     */
+    public function depositQr(Request $request, int $id): JsonResponse
+    {
+        $contract = EscrowContract::with('protectedPayment')->whereKey($id)->firstOrFail();
+
+        $this->authorizeParty($contract, $request);
+
+        if (!$contract->protectedPayment) {
+            return ApiResponse::error('This contract has not been accepted yet, so no deposit QR exists.', null, 'accept_contract_first', 422);
+        }
+
+        return ApiResponse::success(
+            message: 'Dynamic deposit QR generated. Any wallet or bank app can scan and pay.',
+            data: app(\App\Services\QrDepositService::class)->buildDepositQr($contract->protectedPayment),
+            nextStep: 'scan_and_pay',
+            status: 200
+        );
+    }
+
+    /**
      * Approve a counter-proposal version (both-party approval rule).
      * POST /api/v1/contracts/{id}/versions/{version}/approve
      */

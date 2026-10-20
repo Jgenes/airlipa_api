@@ -47,4 +47,18 @@ class LedgerController extends Controller
             status: 200
         );
     }
+
+    /**
+     * Posting-rules catalogue: every business event and its defined journal lines.
+     * GET /api/v1/ledger/posting-rules
+     */
+    public function postingRules(): JsonResponse
+    {
+        return ApiResponse::success(
+            message: 'Posting rules catalogue retrieved.',
+            data: app(\App\Services\Ledger\PostingRulesEngine::class)->catalogue(),
+            nextStep: null,
+            status: 200
+        );
+    }
 }

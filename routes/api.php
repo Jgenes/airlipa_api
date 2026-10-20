@@ -135,6 +135,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('/', [EscrowContractController::class, 'store']);
                 Route::get('{id}', [EscrowContractController::class, 'show'])->whereNumber('id');
                 Route::patch('{id}', [EscrowContractController::class, 'update'])->whereNumber('id');
+                Route::get('{id}/deposit-qr', [EscrowContractController::class, 'depositQr'])->whereNumber('id');
                 Route::post('{id}/share', [EscrowContractController::class, 'share'])->whereNumber('id');
                 Route::post('{id}/versions/{version}/approve', [EscrowContractController::class, 'approveVersion'])
                     ->whereNumber('id')->whereNumber('version');
@@ -167,6 +168,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('/', [ProtectedPaymentController::class, 'store']);
                 Route::get('{id}', [ProtectedPaymentController::class, 'show']);
                 Route::post('{id}/pay', [ProtectedPaymentController::class, 'initiatePayment']);
+                Route::get('{id}/deposit-qr', [ProtectedPaymentController::class, 'depositQr']);
                 Route::get('{id}/status-recovery', [ProtectedPaymentController::class, 'statusRecovery']);
                 Route::get('{id}/payment-status', [ProtectedPaymentController::class, 'statusRecovery']);
                 Route::post('{id}/simulate-provider-callback', [ProtectedPaymentController::class, 'simulateProviderCallback']);
@@ -190,6 +192,7 @@ Route::prefix('v1')->group(function () {
 
             // M08: Operational Financial Sub-Ledger Obligations Summary
             Route::get('ledger/obligations-summary', [LedgerController::class, 'obligationsSummary']);
+            Route::get('ledger/posting-rules', [LedgerController::class, 'postingRules']);
 
             // M12: Bilingual (EN/SW) User Notifications
             Route::get('notifications', [NotificationController::class, 'index']);

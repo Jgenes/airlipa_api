@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\SubledgerType;
 use App\Models\ContractSubledgerAccount;
 use App\Models\EscrowContract;
+use App\Models\LedgerJournal;
 use App\Models\MilestoneSubledgerAccount;
 use App\Models\PartySubledgerAccount;
 use App\Models\ProtectedPayment;
@@ -138,6 +139,81 @@ class SubledgerService
     }
 
     /**
+     * Apply the DEPOSIT_CONFIRMED event to the subledger set atomically:
+     * contract bucket credit, milestone earmarking and party positions.
+     * Idempotent per funding journal (replayed webhooks are no-ops).
+     */
+    public function applyFundingConfirmed(EscrowContract $contract, ProtectedPayment $payment, LedgerJournal $journal): ContractSubledgerAccount
+    {
+        $base = 'fund:' . $journal->journal_id;
+        $principal = (int) $payment->principal_amount_minor;
+        $reference = (string) ($payment->custody_provider_reference ?? $payment->reference);
+
+        return DB::transaction(function () use ($contract, $payment, $journal, $base, $principal, $reference): ContractSubledgerAccount {
+            $account = $this->openForContract($contract, $payment);
+
+            $meta = [
+                'ledger_journal_id' => $journal->id,
+                'reference' => $reference,
+                'reason_code' => 'DEPOSIT_CONFIRMED',
+                'actor_user_id' => $payment->buyer_id,
+                'currency' => $payment->currency,
+            ];
+
+            $account = $this->creditDeposit($account, $principal, $meta + ['idempotency_key' => $base . ':contract']);
+
+            $milestones = $payment->milestones;
+
+            if ($milestones->isNotEmpty()) {
+                // Earmark the full principal against milestones so it cannot be
+                // released outside the milestone approval flow.
+                $account = $this->transferBucket(
+                    SubledgerType::Contract,
+                    $account,
+                    'available_minor',
+                    'held_milestones_minor',
+                    $principal,
+                    $meta + ['idempotency_key' => $base . ':earmark']
+                );
+
+                foreach ($milestones as $milestone) {
+                    $milestoneAccount = MilestoneSubledgerAccount::where('milestone_id', $milestone->id)->first();
+
+                    if ($milestoneAccount) {
+                        $this->creditMilestoneFunding(
+                            $milestoneAccount,
+                            (int) $milestone->amount_minor,
+                            $meta + ['idempotency_key' => $base . ':milestone:' . $milestone->id]
+                        );
+                    }
+                }
+            }
+
+            $buyerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->buyer_id)
+                ->where('role', 'BUYER')
+                ->first();
+
+            $sellerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->merchant_id)
+                ->where('role', 'SELLER')
+                ->first();
+
+            if ($buyerAccount) {
+                $this->increaseBucket(SubledgerType::Party, $buyerAccount, 'funded_minor', $principal, $meta + ['idempotency_key' => $base . ':party-buyer']);
+            }
+
+            if ($sellerAccount) {
+                $this->increaseBucket(SubledgerType::Party, $sellerAccount, 'entitled_minor', $principal, $meta + ['idempotency_key' => $base . ':party-seller']);
+            }
+
+            $this->assertContractConservation($account->refresh());
+
+            return $account;
+        });
+    }
+
+    /**
      * Append an immutable subledger entry (idempotent by key).
      *
      * @param array<string, mixed> $meta
@@ -229,6 +305,42 @@ class SubledgerService
     }
 
     /**
+     * Raise a single bucket of any subledger account under a row lock
+     * (append-only INCREASE entry), idempotent per key.
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function increaseBucket(SubledgerType $type, Model $account, string $bucket, int $amountMinor, array $meta = []): Model
+    {
+        if ($amountMinor <= 0) {
+            throw new DomainException('Subledger increase amount must be a positive integer minor value.');
+        }
+
+        if (!in_array($bucket, self::allowedBuckets($type), true)) {
+            throw new DomainException("Bucket {$bucket} is not permitted for {$type->value}.");
+        }
+
+        $baseKey = (string) ($meta['idempotency_key'] ?? throw new DomainException('Subledger increases require an idempotency key.'));
+
+        return DB::transaction(function () use ($type, $account, $bucket, $amountMinor, $meta, $baseKey): Model {
+            /** @var Model $locked */
+            $locked = $account->newQuery()->whereKey($account->getKey())->lockForUpdate()->first();
+
+            if (SubledgerEntry::where('idempotency_key', $baseKey)->exists()) {
+                return $locked;
+            }
+
+            $locked->{$bucket} = (int) $locked->{$bucket} + $amountMinor;
+            $locked->state_version = (int) $locked->state_version + 1;
+            $locked->save();
+
+            $this->appendEntry($type, (int) $locked->id, $bucket, 'INCREASE', $amountMinor, (int) $locked->{$bucket}, array_merge($meta, ['idempotency_key' => $baseKey]));
+
+            return $locked;
+        });
+    }
+
+    /**
      * Credit a confirmed deposit: raises both the deposited total and the
      * available bucket so the conservation invariant stays intact.
      *
@@ -258,6 +370,40 @@ class SubledgerService
 
             $this->appendEntry(SubledgerType::Contract, $locked->id, 'deposited_minor', 'INCREASE', $amountMinor, (int) $locked->deposited_minor, array_merge($meta, ['idempotency_key' => $baseKey . ':dep']));
             $this->appendEntry(SubledgerType::Contract, $locked->id, 'available_minor', 'INCREASE', $amountMinor, (int) $locked->available_minor, array_merge($meta, ['idempotency_key' => $baseKey . ':avl']));
+
+            return $locked;
+        });
+    }
+
+    /**
+     * Credit a milestone sub-account: funded and available rise together so
+     * funded == available + frozen + pending_release + released + refunded.
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function creditMilestoneFunding(MilestoneSubledgerAccount $account, int $amountMinor, array $meta = []): MilestoneSubledgerAccount
+    {
+        if ($amountMinor <= 0) {
+            throw new DomainException('Milestone funding amount must be a positive integer minor value.');
+        }
+
+        $baseKey = (string) ($meta['idempotency_key'] ?? throw new DomainException('Milestone funding requires an idempotency key.'));
+
+        return DB::transaction(function () use ($account, $amountMinor, $meta, $baseKey): MilestoneSubledgerAccount {
+            /** @var MilestoneSubledgerAccount $locked */
+            $locked = MilestoneSubledgerAccount::whereKey($account->id)->lockForUpdate()->first();
+
+            if (SubledgerEntry::where('idempotency_key', $baseKey . ':fnd')->exists()) {
+                return $locked;
+            }
+
+            $locked->funded_minor = (int) $locked->funded_minor + $amountMinor;
+            $locked->available_minor = (int) $locked->available_minor + $amountMinor;
+            $locked->state_version = (int) $locked->state_version + 1;
+            $locked->save();
+
+            $this->appendEntry(SubledgerType::Milestone, $locked->id, 'funded_minor', 'INCREASE', $amountMinor, (int) $locked->funded_minor, array_merge($meta, ['idempotency_key' => $baseKey . ':fnd']));
+            $this->appendEntry(SubledgerType::Milestone, $locked->id, 'available_minor', 'INCREASE', $amountMinor, (int) $locked->available_minor, array_merge($meta, ['idempotency_key' => $baseKey . ':avl']));
 
             return $locked;
         });

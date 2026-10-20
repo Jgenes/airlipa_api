@@ -23,6 +23,7 @@ class LedgerService
     public const ACC_TAX_PAYABLE = '2400-TAX-PAYABLE';
     public const ACC_REFUND_PAYABLE = '2500-REFUND-PAYABLE';
     public const ACC_DISPUTE_FROZEN_LIABILITY = '2600-DISPUTE-FROZEN-LIABILITY';
+    public const ACC_SUSPENSE_UNRECONCILED = '1300-SUSPENSE-UNRECONCILED';
     public const ACC_EARNED_PLATFORM_REVENUE = '4100-EARNED-PLATFORM-REVENUE';
 
     /**
@@ -79,6 +80,13 @@ class LedgerService
                 'account_class' => 'LIABILITY',
                 'normal_side' => 'CREDIT',
                 'description' => 'Tracks disputed protected principal blocked from automatic release or settlement.',
+            ],
+            [
+                'account_code' => self::ACC_SUSPENSE_UNRECONCILED,
+                'account_name' => 'Suspense / Unreconciled Customer Money Control',
+                'account_class' => 'LIABILITY',
+                'normal_side' => 'CREDIT',
+                'description' => 'Holds unidentified, part or over-paid customer money until matcher approval, refund or contract matching.',
             ],
             [
                 'account_code' => self::ACC_EARNED_PLATFORM_REVENUE,
@@ -238,47 +246,15 @@ class LedgerService
         string $providerReference,
         ?User $actor = null
     ): LedgerJournal {
-        $lines = [
-            [
-                'account_code' => self::ACC_PROVIDER_CLEARING,
-                'direction' => 'DEBIT',
-                'amount_minor' => (int) $payment->total_payable_minor,
-                'party_user_id' => $payment->buyer_id,
-                'narration' => "Provider-confirmed funding received via {$payment->custody_provider_code} ({$providerReference})",
-            ],
-            [
-                'account_code' => self::ACC_PROTECTED_CUSTOMER_LIABILITY,
-                'direction' => 'CREDIT',
-                'amount_minor' => (int) $payment->principal_amount_minor,
-                'party_user_id' => $payment->buyer_id,
-                'narration' => "Protected principal held for agreement {$payment->reference}",
-            ],
-        ];
-
-        if ((int) $payment->buyer_fee_minor > 0) {
-            $lines[] = [
-                'account_code' => self::ACC_DEFERRED_PLATFORM_FEE,
-                'direction' => 'CREDIT',
-                'amount_minor' => (int) $payment->buyer_fee_minor,
-                'party_user_id' => $payment->buyer_id,
-                'narration' => "Deferred buyer protection service fee for {$payment->reference}",
-            ];
-        }
-
-        if ((int) $payment->buyer_tax_minor > 0) {
-            $lines[] = [
-                'account_code' => self::ACC_TAX_PAYABLE,
-                'direction' => 'CREDIT',
-                'amount_minor' => (int) $payment->buyer_tax_minor,
-                'party_user_id' => $payment->buyer_id,
-                'narration' => "VAT payable on buyer protection fee for {$payment->reference}",
-            ];
-        }
+        $lines = app(\App\Services\Ledger\PostingRulesEngine::class)->linesFor(
+            \App\Services\Ledger\PostingRulesEngine::EVENT_DEPOSIT_CONFIRMED,
+            ['payment' => $payment, 'provider_reference' => $providerReference]
+        );
 
         return $this->postJournal(
             correlationId: $payment->correlation_id,
             eventType: 'FUNDING_CONFIRMED',
-            postingRuleCode: 'PR_PROTECTED_FUNDING_V1',
+            postingRuleCode: \App\Services\Ledger\PostingRulesEngine::EVENT_DEPOSIT_CONFIRMED,
             idempotencyKey: "jrn_funding_{$payment->protected_payment_id}_{$intent->intent_id}",
             currency: $payment->currency,
             description: "Provider-confirmed funding for Protected Payment {$payment->reference}",
@@ -290,6 +266,40 @@ class LedgerService
                 'intent_id' => $intent->intent_id,
                 'quote_id' => $payment->feeQuote?->quote_id,
             ]
+        );
+    }
+
+    /**
+     * Post the balanced journal defined by the posting-rules engine for any
+     * registered business event (no ad-hoc postings).
+     *
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $metadata
+     */
+    public function postEventJournal(
+        string $correlationId,
+        string $eventCode,
+        array $context,
+        string $idempotencyKey,
+        ?int $protectedPaymentId = null,
+        ?string $providerReference = null,
+        ?int $actorUserId = null,
+        array $metadata = []
+    ): LedgerJournal {
+        $engine = app(\App\Services\Ledger\PostingRulesEngine::class);
+
+        return $this->postJournal(
+            correlationId: $correlationId,
+            eventType: $eventCode,
+            postingRuleCode: $eventCode,
+            idempotencyKey: $idempotencyKey,
+            currency: (string) ($context['currency'] ?? 'TZS'),
+            description: (string) ($context['description'] ?? "{$eventCode} journal"),
+            lines: $engine->linesFor($eventCode, $context),
+            protectedPaymentId: $protectedPaymentId,
+            providerReference: $providerReference,
+            actorUserId: $actorUserId,
+            metadata: $metadata + ['posting_rule_version' => $engine->ruleVersion($eventCode)]
         );
     }
 

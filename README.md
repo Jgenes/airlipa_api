@@ -330,6 +330,19 @@ The product brief's textual state machine (`DRAFT -> SHARED -> ACCEPTED -> AWAIT
 
 ---
 
+## Service 4: Selcom Deposits & Dynamic QR (Phase 2)
+
+Phase 2 wires the deposit side of the escrow platform to **Selcom as the single licensed payment partner**: one pooled escrow account, all rails (Airtel Money, M-Pesa, Tigo Pesa/Mixx by Yas, Halopesa, Selcom Pay, bank transfer, Airtel Lipa, TanQR) collected through it.
+
+- **SelcomProvider** (`app/Services/PaymentProviders/SelcomProvider.php`) implements the provider-neutral `PaymentProviderAdapterInterface` (initiateCollection / queryStatus / executeRelease / executeRefund / webhook sign+verify). Sandbox mode is a deterministic in-process mock; live mode talks HTTP with idempotency keys and safe-fails to `UNKNOWN` on gateway errors.
+- **Posting-rules engine** (`app/Services/Ledger/PostingRulesEngine.php`): every business event maps to versioned, balanced journal lines - `DEPOSIT_CONFIRMED`, `DEPOSIT_OVERPAYMENT_SUSPENSE`, `DEPOSIT_PARTIAL_HELD` live now; release/refund/dispute/fee-sweep rules register here in later phases. Catalogue exposed at `GET /api/v1/ledger/posting-rules`. No ad-hoc postings.
+- **Deposit postings**: a verified Selcom confirmation posts the GL funding journal AND, in the same transaction, credits the contract subledger (Deposited/Available), earmarks milestone contracts into `held_milestones`, funds each milestone sub-account, and raises buyer `funded` / seller `entitled` party positions - all append-only and idempotent per funding journal.
+- **Overpayments** fund only the payable total; the excess is journaled to `1300-SUSPENSE-UNRECONCILED`, recorded as an UNMATCHED suspense item with a HIGH reconciliation exception for refund/matcher approval. **Part payments** never fund: they are held in suspense with bilingual buyer notification.
+- **Dynamic deposit QR** (`GET /api/v1/protected-payments/{id}/deposit-qr`, `GET /api/v1/contracts/{id}/deposit-qr`): TanQR/EMVCo TLV payload with the exact amount, contract reference and pooled-account Lipa Namba, CRC16-CCITT checksummed; scannable from any wallet or bank app.
+- Instant bilingual (EN/SW) outbox notifications to both parties on confirmed deposits.
+
+---
+
 ## Running Automated Feature Tests
 
 Execute the Pest test suite:

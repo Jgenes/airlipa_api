@@ -117,7 +117,43 @@ return [
     | Default Approved Licensed Providers (M18 Capability Registry)
     |--------------------------------------------------------------------------
     */
+    /*
+    |--------------------------------------------------------------------------
+    | Selcom Connection (single licensed payment partner)
+    |--------------------------------------------------------------------------
+    | sandbox=true runs the deterministic in-process mock (local dev + tests).
+    | All rails (Airtel Money, M-Pesa, Tigo Pesa/Mixx, Halopesa, Selcom Pay,
+    | bank, Airtel Lipa, TanQR) collect into ONE pooled escrow account.
+    */
+    'selcom' => [
+        'base_url' => env('SELCOM_BASE_URL', 'https://api.selcom.co.tz'),
+        'api_key' => env('SELCOM_API_KEY', ''),
+        'sandbox' => (bool) env('SELCOM_SANDBOX', true),
+        'timeout_seconds' => (int) env('SELCOM_TIMEOUT_SECONDS', 20),
+        'lipa_namba' => env('SELCOM_LIPA_NAMBA', '987654'),
+        'account_name' => env('SELCOM_ACCOUNT_NAME', 'AIRLIPA ESCROW POOL'),
+        'escrow_account_reference' => env('SELCOM_ESCROW_ACCOUNT', 'SELCOM-POOLED-ESCROW-001'),
+        'webhook_url' => env('SELCOM_WEBHOOK_URL', 'https://api.airlipa.co.tz/api/v1/webhooks/providers/SELCOM_TZ'),
+    ],
+
     'default_providers' => [
+        [
+            'provider_code' => 'SELCOM_TZ',
+            'provider_name' => 'Selcom Tanzania (Licensed PSP / Escrow Custodian)',
+            'legal_entity' => 'Selcom (T) Limited',
+            'provider_type' => 'AGGREGATOR',
+            'license_reference' => 'BOT-PSP-SELCOM-2026',
+            'custody_account_reference' => 'SELCOM-POOLED-ESCROW-001',
+            'supported_currencies' => ['TZS'],
+            'min_amount_minor' => 10000, // 100.00 TZS
+            'max_amount_minor' => 5000000000, // 50,000,000.00 TZS
+            'supports_protected_hold' => true,
+            'supports_refund' => true,
+            'supports_payout' => true,
+            'is_active' => true,
+            'webhook_secret' => env('SELCOM_WEBHOOK_SECRET', 'whsec_selcom_tz_secret_2026'),
+            'approval_reference' => 'M18-CAP-SELCOM-2026-00',
+        ],
         [
             'provider_code' => 'MPESA_TZ',
             'provider_name' => 'Vodacom M-Pesa Tanzania',
