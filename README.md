@@ -446,3 +446,25 @@ CI (`.github/workflows/ci.yml`) runs the same ladder in a `static` job —
 matrix installs Composer and executes `php artisan test`. The static job needs
 no `vendor/`, so a broken import or route fails the pipeline in under a minute
 instead of after a full dependency install.
+
+### The first real execution
+
+The suites had never been run when they were written. Running them for the
+first time found real defects, not just wrong assertions — this is the record:
+
+| Symptom | Cause |
+| --- | --- |
+| Every contract share/accept failed | `User` has `first_name`/`last_name`; the signature row read `full_name` and `name`, both null, and hit `NOT NULL`. |
+| 20 tests died on `CHECK constraint failed: purpose` | `otp_codes.purpose` still allowed only `activation`/`login` after acceptance and step-up OTPs were added. |
+| All escrow subledger movement silently skipped | `ProtectedPaymentService` declared the subledger, outbox and risk engine as optional constructor params with `null` defaults; the container supplied `null`. Releases, refunds and payouts never moved a bucket, and risk scoring and notifications were skipped too — with no error anywhere. |
+| Releases and refunds double-counted nothing | Confirm and reversal steps reused the reserve step's idempotency key, so they matched existing entries and no-op'd. |
+| Every share link collided | Token was `contractId.expiry.hmac` — identical for all channels shared in the same second. |
+| Handover QR scan returned 500 | Delivery tokens are stored as sha256 and were verified with `Hash::check`. |
+| Daily close found nothing it had just written | A `date` cast stored `Y-m-d H:i:s`, so the exact-match read of the same day missed. |
+| Payout with step-up returned 500 | The transaction closure did not capture `$data`. |
+| Every business merchant looked like an individual | `user_type->value === 'business'` compared against a migration that spells it `Business`. |
+| Milestone releases failed with insufficient balance | Milestone funding sits in `held_milestones_minor`, but reserves drew from `available_minor`. |
+| A duplicated `use Hash` import | `php -l` only — a Zend fatal on every payout request. |
+
+Status: `php artisan test` passes on PHP 8.2 and 8.3 (132 tests, ~930
+assertions), and the static ladder is green.
