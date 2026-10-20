@@ -163,7 +163,7 @@ class EscrowContractService
                 [
                     'signature_id' => 'sig_' . Str::lower(Str::ulid()),
                     'escrow_contract_version_id' => $version->id,
-                    'full_name' => $initiator->full_name ?? $initiator->name,
+                    'full_name' => $initiator->full_name ?: (string) $initiator->phone,
                     'phone' => (string) $initiator->phone,
                     'email' => $initiator->email,
                     'ip_address' => Request::ip(),
@@ -216,7 +216,7 @@ class EscrowContractService
             'dispute_terms' => $contract->dispute_terms,
             'fee_payer' => $contract->fee_payer->value,
             'initiator_role' => $contract->initiator_role,
-            'initiator_name' => $contract->initiator->full_name ?? $contract->initiator->name,
+            'initiator_name' => $contract->initiator->full_name ?: (string) $contract->initiator->phone,
             'counterparty_name' => $contract->counterparty_name,
             'your_role' => $contract->initiator_role === 'BUYER' ? 'SELLER' : 'BUYER',
             'status' => $contract->status->value,
@@ -285,7 +285,7 @@ class EscrowContractService
                 [
                     'signature_id' => 'sig_' . Str::lower(Str::ulid()),
                     'escrow_contract_version_id' => $version->id,
-                    'full_name' => trim((string) ($data['full_name'] ?? $user->full_name ?? $user->name)),
+                    'full_name' => trim((string) ($data['full_name'] ?? $user->full_name)) ?: (string) $user->phone,
                     'phone' => (string) $user->phone,
                     'email' => $user->email,
                     'ip_address' => Request::ip(),

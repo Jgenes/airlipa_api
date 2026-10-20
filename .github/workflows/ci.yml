@@ -111,10 +111,16 @@ jobs:
           log="$RUNNER_TEMP/pest.log"
           { echo "$(php artisan --version 2>/dev/null) on PHP $(php -r 'echo PHP_VERSION;')"
             echo
-            grep -E 'FAIL|Tests:|⨯' "$log" | head -40
+            grep -E 'Tests:' "$log" | tail -1
             echo
             echo '```'
-            tail -c 3000 "$log"
+            grep -E '^  ⨯' "$log" | head -80
+            echo '```'
+            echo
+            echo 'Per-test failure details:'
+            echo
+            echo '```'
+            grep -A4 -E '^   FAILED ' "$log" | head -500
             echo '```'
           } > "$RUNNER_TEMP/excerpt.md"
           gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" \
