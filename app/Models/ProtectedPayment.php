@@ -24,6 +24,7 @@ class ProtectedPayment extends Model
         'correlation_id',
         'fee_quote_id',
         'payment_link_id',
+        'escrow_contract_id',
         'merchant_id',
         'buyer_id',
         'transaction_type',

@@ -296,6 +296,40 @@ Service 2 implements the **Airlipa One Protected Payment Core** (excluding e-com
 
 ---
 
+## Service 3: Escrow Contracts (Two-Party Agreement Layer, Phase 1)
+
+Service 3 adds the full two-party escrow contract lifecycle on top of the Protected Payment core. The initiator (buyer **or** seller) drafts a contract, shares it over every channel, and the counterparty accepts it with an OTP-backed e-signature. Acceptance mints the underlying `ProtectedPayment` (Figure 5 state machine) and opens the subledger set atomically.
+
+- **Lifecycle**: `DRAFT -> SHARED -> ACCEPTED` with `REJECTED`, `EXPIRED` (hourly `escrow-contracts:expire-overdue` job) and `CANCELLED` branches. Server-side enforcement only; every transition is audit-logged.
+- **Sharing channels**: WhatsApp (`wa.me` deep link), SMS (gateway driver), Email (HTML template + link), QR (scannable payload), and copyable secure link. Each share carries a **signed, expiring, single-contract HMAC token** (`{contractId}.{expiry}.{hmac}`); views are tracked per channel (`CREATED/DELIVERED/OPENED`, `view_count`, `opened_at`).
+- **Acceptance & e-signature**: counterparty may view anonymously but must register + verify by OTP (`contract_acceptance` purpose). The signature row stores name, phone, IP, device, SHA-256 `contract_hash` of the canonical final terms and the OTP verification timestamp. Contracts are immutable after acceptance.
+- **Counter-proposals**: `request-changes` creates version *n+1* (`PENDING_INITIATOR_APPROVAL`); the initiator's approval makes it `CURRENT`, supersedes older versions and re-opens the acceptance window. Stale-version links cannot be accepted.
+- **Subledger foundation** (Phase 1 of the ledger programme): `contract_subledger_accounts` (Deposited / Available / Held-for-Milestones / Frozen / Pending-Release / Pending-Refund / Released / Refunded / Fees buckets), `milestone_subledger_accounts`, `party_subledger_accounts`, `dispute_holds`, `fee_records`, append-only `subledger_entries`, `balance_snapshots` (daily close via `ledger:snapshot-subledgers`) and `suspense_items`.
+- **Invariants**: money conservation (`deposited == available + held + frozen + pending_release + pending_refund + released + refunded`), row-locked bucket transfers, operation-level idempotency keys (replayed webhooks never move funds twice), overspend rejection, and portfolio scans consumed by reconciliation. Deposit/release/refund/dispute postings wire into these buckets in Phases 2-4.
+
+### Escrow Contract API Endpoints (`/api/v1`)
+
+| Module | Method | Endpoint | Description |
+|--------|--------|----------|-------------|
+| M1 Contracts | `POST` | `/api/v1/contracts` | Create a DRAFT escrow contract (roles, milestones, terms, fee payer) |
+| M1 Contracts | `GET` | `/api/v1/contracts` | List contracts I initiated or was invited to |
+| M1 Contracts | `GET` | `/api/v1/contracts/{id}` | Contract detail with versions, signatures and subledger (parties only) |
+| M1 Contracts | `PATCH` | `/api/v1/contracts/{id}` | Edit while DRAFT (refreshes terms hash) |
+| M2 Sharing | `POST` | `/api/v1/contracts/{id}/share` | Share via `WHATSAPP,SMS,EMAIL,QR,LINK`; initiator e-signs; returns tokens/payloads |
+| M2 Sharing | `GET` | `/api/v1/contracts/share/{token}` | Public read-only view via signed token; tracks opened/viewed |
+| M3 Acceptance | `POST` | `/api/v1/contracts/share/{token}/acceptance-otp` | Issue acceptance OTP to the named counterparty |
+| M3 Acceptance | `POST` | `/api/v1/contracts/share/{token}/accept` | OTP + e-signature acceptance; mints Protected Payment & opens subledgers |
+| M3 Acceptance | `POST` | `/api/v1/contracts/share/{token}/reject` | Reject with reason |
+| M3 Versioning | `POST` | `/api/v1/contracts/share/{token}/request-changes` | Counter-proposal (new version pending initiator approval) |
+| M3 Versioning | `POST` | `/api/v1/contracts/{id}/versions/{version}/approve` | Initiator approves a counter-proposal |
+| M1 Contracts | `POST` | `/api/v1/contracts/{id}/cancel` | Cancel while DRAFT/SHARED |
+
+### Spec vs. design-pack reconciliation
+
+The product brief's textual state machine (`DRAFT -> SHARED -> ACCEPTED -> AWAITING_DEPOSIT -> FUNDED -> ...`) and the design pack figures (Figure 5: `DRAFT -> PAYMENT_PENDING -> FUNDED_PROTECTED -> FULFILMENT_IN_PROGRESS -> AWAITING_ACCEPTANCE -> ...`) describe the same money flow at two altitudes. Per the working instructions the figures are authoritative: the **contract layer** owns `DRAFT/SHARED/ACCEPTED/...` (agreement between parties) and hands off to the **Protected Payment state machine** (Figure 5) for custody, fulfilment, dispute-freeze and settlement. `AWAITING_ACCEPTANCE` in Figure 5 remains the buyer's *delivery* acceptance, distinct from contract acceptance in Module 3.
+
+---
+
 ## Running Automated Feature Tests
 
 Execute the Pest test suite:

@@ -3,7 +3,9 @@
 use App\Http\Controllers\Api\V1\AdminKybController;
 use App\Http\Controllers\Api\V1\AdminOperationsController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\ContractShareController;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\EscrowContractController;
 use App\Http\Controllers\Api\V1\DisputeController;
 use App\Http\Controllers\Api\V1\KybController;
 use App\Http\Controllers\Api\V1\KycController;
@@ -66,6 +68,10 @@ Route::prefix('v1')->group(function () {
     Route::get('payment-links/{token}', [PaymentLinkController::class, 'preview'])
         ->name('payment-links.preview');
 
+    // Public, signed, expiring escrow contract share view (Module 2)
+    Route::get('contracts/share/{token}', [ContractShareController::class, 'publicShow'])
+        ->name('contracts.share.public');
+
     Route::post('webhooks/providers/{providerCode}', [ProviderWebhookController::class, 'handleWebhook'])
         ->name('webhooks.providers.handle');
 
@@ -103,10 +109,37 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::post('auth/logout-all', [AuthController::class, 'logoutAll']);
 
+        // ==========================================
+        // Escrow contract share-token actions (Module 3): the counterparty may
+        // hold a basic-tier (phone verified) account, so full KYC is not forced.
+        // ==========================================
+        Route::prefix('contracts/share/{token}')->group(function () {
+            Route::post('acceptance-otp', [ContractShareController::class, 'requestAcceptanceOtp'])
+                ->middleware('throttle:10,1');
+            Route::post('accept', [ContractShareController::class, 'accept'])
+                ->middleware('throttle:10,1');
+            Route::post('reject', [ContractShareController::class, 'reject']);
+            Route::post('request-changes', [ContractShareController::class, 'requestChanges']);
+        });
+
         // Endpoints requiring verified status (or business with submitted KYB)
         Route::middleware(['ensure.fully.verified'])->group(function () {
             Route::get('dashboard', [DashboardController::class, 'index']);
             Route::get('profile', [ProfileController::class, 'show']);
+
+            // ==========================================
+            // Escrow contracts: draft, share, version approval, cancel (Modules 1-3)
+            // ==========================================
+            Route::prefix('contracts')->group(function () {
+                Route::get('/', [EscrowContractController::class, 'index']);
+                Route::post('/', [EscrowContractController::class, 'store']);
+                Route::get('{id}', [EscrowContractController::class, 'show'])->whereNumber('id');
+                Route::patch('{id}', [EscrowContractController::class, 'update'])->whereNumber('id');
+                Route::post('{id}/share', [EscrowContractController::class, 'share'])->whereNumber('id');
+                Route::post('{id}/versions/{version}/approve', [EscrowContractController::class, 'approveVersion'])
+                    ->whereNumber('id')->whereNumber('version');
+                Route::post('{id}/cancel', [EscrowContractController::class, 'cancel'])->whereNumber('id');
+            });
 
             // M18: Approved Payment Providers
             Route::get('providers', [ProviderWebhookController::class, 'listProviders']);
