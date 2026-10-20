@@ -94,6 +94,8 @@ class PayoutSettlementController extends Controller
         $validated = $request->validate([
             'idempotency_key' => ['nullable', 'string', 'max:100'],
             'payout_account_id' => ['nullable', 'string', 'max:64'],
+            'step_up_password' => ['nullable', 'string'],
+            'handover_otp' => ['nullable', 'string', 'size:6'],
         ]);
 
         $idempotencyKey = (string) ($request->header('Idempotency-Key') ?: ($validated['idempotency_key'] ?? ''));
@@ -114,7 +116,8 @@ class PayoutSettlementController extends Controller
             payment: $payment,
             actor: $user,
             idempotencyKey: $idempotencyKey,
-            payoutAccountId: $validated['payout_account_id'] ?? null
+            payoutAccountId: $validated['payout_account_id'] ?? null,
+            data: $validated
         );
 
         $instruction = $result['instruction'];
@@ -122,7 +125,9 @@ class PayoutSettlementController extends Controller
         return ApiResponse::success(
             message: $result['idempotent_replay']
                 ? 'Idempotent replay: returning existing payout instruction.'
-                : 'Merchant settlement payout executed and recorded in the sub-ledger.',
+                : (($result['retry_scheduled'] ?? false)
+                    ? 'Provider did not settle the payout; it has been queued for automatic retry with backoff.'
+                    : 'Merchant settlement payout executed and recorded in the sub-ledger.'),
             data: [
                 'idempotent_replay' => $result['idempotent_replay'],
                 'payout_instruction' => [
@@ -142,7 +147,7 @@ class PayoutSettlementController extends Controller
                 ],
             ],
             nextStep: 'completed',
-            status: $result['idempotent_replay'] ? 200 : 201
+            status: 200
         );
     }
 

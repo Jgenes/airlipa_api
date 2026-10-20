@@ -5,7 +5,7 @@ namespace App\Providers;
 use App\Services\Nida\MockNidaService;
 use App\Services\Nida\NidaServiceInterface;
 use App\Services\PaymentProviders\PaymentProviderAdapterInterface;
-use App\Services\PaymentProviders\TzProviderGatewayAdapter;
+use App\Services\PaymentProviders\SelcomProvider;
 use App\Services\Sms\LogSmsDriver;
 use App\Services\Sms\SmsManager;
 use App\Services\Sms\SmsServiceInterface;
@@ -31,9 +31,11 @@ class AppServiceProvider extends ServiceProvider
             return new MockNidaService();
         });
 
-        // Bind Provider-Neutral Payment Gateway Adapter (M05)
+        // Bind the Selcom adapter as the single licensed payment partner (M05).
+        // All collections, payouts and refunds run through Selcom; rail codes
+        // (M-Pesa, Tigo Pesa, Mixx, Airtel, TanQR, banks) are channels within it.
         $this->app->singleton(PaymentProviderAdapterInterface::class, function () {
-            return new TzProviderGatewayAdapter();
+            return new SelcomProvider(app(\App\Services\QrDepositService::class));
         });
     }
 

@@ -14,12 +14,15 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class DisputeService
 {
     public function __construct(
         protected LedgerService $ledgerService,
-        protected ProtectedPaymentService $protectedPaymentService
+        protected ProtectedPaymentService $protectedPaymentService,
+        protected SubledgerService $subledgerService,
+        protected DisputeTimelineService $timelineService
     ) {}
 
     /**
@@ -105,9 +108,43 @@ class DisputeService
                 actor: $actor
             );
 
+            // Freeze the same amount inside the escrow contract subledger so it
+            // cannot be released while the case is open.
+            if ($payment->escrowContract) {
+                $this->subledgerService->freezeForDispute(
+                    contract: $payment->escrowContract,
+                    amountMinor: $disputedAmountMinor,
+                    baseKey: 'dispute:' . $dispute->case_id,
+                    actorUserId: $actor->id
+                );
+
+                \App\Models\DisputeHold::create([
+                    'hold_id' => 'hold_' . Str::lower(Str::ulid()),
+                    'escrow_contract_id' => $payment->escrowContract->id,
+                    'protected_payment_id' => $payment->id,
+                    'dispute_case_id' => $dispute->id,
+                    'currency' => $payment->currency,
+                    'amount_minor' => $disputedAmountMinor,
+                    'status' => 'ACTIVE',
+                    'frozen_at' => now(),
+                ]);
+            }
+
             if (!$payment->fresh()->verifyConservationInvariant()) {
                 throw new \DomainException('Rule 36 conservation of value invariant failed after dispute freeze.');
             }
+
+            $this->timelineService->recordEvent(
+                $dispute,
+                'TIMELINE',
+                sprintf(
+                    'Case opened (%s) and TZS %s frozen pending review.',
+                    $caseType->value,
+                    number_format($disputedAmountMinor / 100, 2)
+                ),
+                ['event' => 'CASE_OPENED', 'frozen_minor' => $disputedAmountMinor],
+                $actor
+            );
 
             AuditLogService::log('dispute_case_opened_and_frozen', $actor, [
                 'protected_payment_id' => $payment->protected_payment_id,
@@ -142,6 +179,10 @@ class DisputeService
         $payment = $dispute->protectedPayment;
         if ($analyst->id === $payment->buyer_id || $analyst->id === $payment->merchant_id || $analyst->id === $dispute->opened_by_user_id) {
             throw new AccessDeniedHttpException('Conflict-of-interest violation: The decision authority cannot be a party to the transaction or the user who opened the dispute.');
+        }
+
+        if ($dispute->status === 'APPEALED') {
+            throw new ConflictHttpException('This case is under appeal; the appeal reviewer must decide it before any further financial action.');
         }
 
         if ($dispute->status === 'EXECUTED') {
@@ -236,9 +277,56 @@ class DisputeService
                     : SettlementStatus::NotEligible,
             ]);
 
+            if ($payment->escrowContract) {
+                $this->subledgerService->settleDisputeHold(
+                    contract: $payment->escrowContract,
+                    releasedMinor: $releaseMinor,
+                    refundedMinor: $refundMinor,
+                    baseKey: 'dispute:' . $dispute->case_id . ':resolution',
+                    actorUserId: $analyst->id,
+                    payment: $payment
+                );
+
+                \App\Models\DisputeHold::where('dispute_case_id', $dispute->id)
+                    ->where('status', 'ACTIVE')
+                    ->update([
+                        'status' => match (true) {
+                            $releaseMinor > 0 && $refundMinor > 0 => 'SPLIT',
+                            $releaseMinor > 0 => 'RELEASED',
+                            default => 'REFUNDED',
+                        },
+                        'resolved_at' => now(),
+                        'resolution' => [
+                            'release_to_merchant_minor' => $releaseMinor,
+                            'refund_to_buyer_minor' => $refundMinor,
+                            'outcome' => $outcome->value,
+                        ],
+                    ]);
+            }
+
             if (!$freshPayment->fresh()->verifyConservationInvariant()) {
                 throw new \DomainException('Rule 36 conservation of value invariant failed after dispute resolution.');
             }
+
+            $this->timelineService->recordEvent(
+                $dispute,
+                'DECISION',
+                sprintf(
+                    'Decision: %s. Released TZS %s to the seller, refunded TZS %s to the buyer. Reason: %s',
+                    $outcome->value,
+                    number_format($releaseMinor / 100, 2),
+                    number_format($refundMinor / 100, 2),
+                    (string) $dispute->fresh()->decision_reason_code
+                ),
+                [
+                    'event' => 'DECISION_EXECUTED',
+                    'outcome' => $outcome->value,
+                    'release_to_merchant_minor' => $releaseMinor,
+                    'refund_to_buyer_minor' => $refundMinor,
+                    'appeal_deadline_at' => $dispute->fresh()->appeal_deadline_at?->toIso8601String(),
+                ],
+                $analyst
+            );
 
             AuditLogService::log('dispute_case_resolved_and_executed', $analyst, [
                 'case_id' => $dispute->case_id,
@@ -257,6 +345,125 @@ class DisputeService
                 'agreement' => $freshPayment->fresh(['feeQuote', 'merchant.businessProfile', 'buyer', 'milestones']),
                 'journals' => $journals,
             ];
+        });
+    }
+
+    /**
+     * File the single permitted appeal against an executed decision (Module 7).
+     * Only a party to the case may appeal, only inside the appeal window, and
+     * only once per case.
+     */
+    public function appealCase(DisputeCase $dispute, User $actor, string $reason): DisputeCase
+    {
+        $payment = $dispute->protectedPayment;
+
+        if (!$payment || ($actor->id !== $payment->buyer_id && $actor->id !== $payment->merchant_id)) {
+            throw new AccessDeniedHttpException('Only a party to this dispute can appeal the decision.');
+        }
+
+        if ($dispute->status !== 'EXECUTED') {
+            throw new ConflictHttpException("Only an executed decision can be appealed; this case is '{$dispute->status}'.");
+        }
+
+        if ((int) $dispute->appeal_count >= 1) {
+            throw new ConflictHttpException('This case has already used its single permitted appeal.');
+        }
+
+        if ($dispute->appeal_deadline_at && $dispute->appeal_deadline_at->isPast()) {
+            throw ValidationException::withMessages([
+                'reason' => ['The appeal window for this case has closed.'],
+            ]);
+        }
+
+        if (trim($reason) === '') {
+            throw ValidationException::withMessages([
+                'reason' => ['An appeal reason is required.'],
+            ]);
+        }
+
+        return DB::transaction(function () use ($dispute, $actor, $reason): DisputeCase {
+            $dispute->update([
+                'status' => 'APPEALED',
+                'appeal_count' => (int) $dispute->appeal_count + 1,
+                'original_decision_outcome' => $dispute->decision_outcome?->value,
+                'appeal_reason' => trim($reason),
+                'appealed_at' => now(),
+                'appealed_by_user_id' => $actor->id,
+            ]);
+
+            $dispute->protectedPayment?->update([
+                'dispute_status' => DisputeStatus::Appealed,
+                'state_version' => (int) $dispute->protectedPayment->state_version + 1,
+            ]);
+
+            $this->timelineService->recordEvent(
+                $dispute,
+                'APPEAL',
+                'Appeal filed: ' . trim($reason),
+                ['event' => 'APPEAL_FILED', 'original_outcome' => $dispute->original_decision_outcome],
+                $actor
+            );
+
+            AuditLogService::log('dispute.appeal_filed', $actor, [
+                'case_id' => $dispute->case_id,
+                'original_outcome' => $dispute->original_decision_outcome,
+            ]);
+
+            return $dispute->fresh(['protectedPayment', 'openedBy', 'decidedBy', 'appealedBy']);
+        });
+    }
+
+    /**
+     * Decide an appeal. The appeal reviewer upholds the executed outcome or
+     * escalates to a fresh investigation; changing money already paid out
+     * requires reversal postings, so it is deliberately not a silent rewrite.
+     */
+    public function decideAppeal(DisputeCase $dispute, User $reviewer, string $decision, string $notes): DisputeCase
+    {
+        if (!$reviewer->isAdmin()) {
+            throw new AccessDeniedHttpException('Only an authorized appeals reviewer can decide an appeal.');
+        }
+
+        if ($dispute->decided_by_user_id === $reviewer->id) {
+            throw new AccessDeniedHttpException('Segregation of duties: the original decision maker cannot review the appeal.');
+        }
+
+        if ($dispute->status !== 'APPEALED') {
+            throw new ConflictHttpException("This case is not under appeal (status '{$dispute->status}').");
+        }
+
+        $normalized = strtoupper($decision);
+
+        if (!in_array($normalized, ['UPHOLD', 'ESCALATE'], true)) {
+            throw ValidationException::withMessages([
+                'decision' => ['The appeal decision must be UPHOLD or ESCALATE.'],
+            ]);
+        }
+
+        return DB::transaction(function () use ($dispute, $reviewer, $normalized, $notes): DisputeCase {
+            $dispute->update([
+                'status' => $normalized === 'UPHOLD' ? 'CLOSED' : 'UNDER_REVIEW',
+                'approved_by_user_id' => $reviewer->id,
+            ]);
+
+            $dispute->protectedPayment?->update([
+                'dispute_status' => $normalized === 'UPHOLD' ? DisputeStatus::Closed : DisputeStatus::UnderReview,
+            ]);
+
+            $this->timelineService->recordEvent(
+                $dispute,
+                'DECISION',
+                sprintf('Appeal %s by reviewer. %s', strtolower($normalized), trim($notes)),
+                ['event' => 'APPEAL_DECIDED', 'decision' => $normalized],
+                $reviewer
+            );
+
+            AuditLogService::log('dispute.appeal_decided', $reviewer, [
+                'case_id' => $dispute->case_id,
+                'decision' => $normalized,
+            ]);
+
+            return $dispute->fresh(['protectedPayment', 'openedBy', 'decidedBy', 'appealedBy']);
         });
     }
 }

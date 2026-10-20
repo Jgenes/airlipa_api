@@ -24,6 +24,7 @@ class ProtectedPayment extends Model
         'correlation_id',
         'fee_quote_id',
         'payment_link_id',
+        'escrow_contract_id',
         'merchant_id',
         'buyer_id',
         'transaction_type',
@@ -115,6 +116,11 @@ class ProtectedPayment extends Model
     public function paymentLink(): BelongsTo
     {
         return $this->belongsTo(ProtectedPaymentLink::class, 'payment_link_id');
+    }
+
+    public function escrowContract(): BelongsTo
+    {
+        return $this->belongsTo(EscrowContract::class, 'escrow_contract_id');
     }
 
     public function merchant(): BelongsTo

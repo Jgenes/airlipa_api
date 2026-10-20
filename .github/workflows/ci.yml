@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast, dependency-free gates: run first so a syntax/semantic break fails in
+  # under a minute instead of after a full composer install.
+  static:
+    name: Syntax & semantic checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+
+      - name: PHP syntax (php -l)
+        run: |
+          set -euo pipefail
+          failures=0
+          while IFS= read -r file; do
+            out=$(php -l "$file" 2>&1) || true
+            case "$out" in
+              "No syntax errors"*) ;;
+              *) echo "::error file=$file::$out"; failures=$((failures+1));;
+            esac
+          done < <(find app config database routes tests bootstrap public -name '*.php' | sort)
+          echo "lint failures: $failures"
+          test "$failures" -eq 0
+
+      - name: Framework-free money logic tests
+        run: php tools/logic_tests.php
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PHP grammar
+        run: pip install tree-sitter tree-sitter-php
+
+      - name: PHP grammar parse (tree-sitter)
+        run: python3 tools/php_syntax_check.py
+
+      - name: Semantic checks (routes, imports, enums, views, config)
+        run: python3 tools/semantic_checks.py
+
+  tests:
+    name: Pest suite (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    needs: static
+    permissions:
+      contents: write # publish the failure excerpt as a commit comment
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.2", "8.3"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, openssl, pdo_sqlite, sqlite3, bcmath, fileinfo, ctype, tokenizer, xml
+          coverage: none
+          tools: composer:v2
+
+      - name: Cache composer downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache
+          key: composer-${{ matrix.php }}-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-${{ matrix.php }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate --no-interaction
+
+      # Failure output lives in the job log, which is not reachable from
+      # every environment (and is awkward to read on a phone). Mirror the
+      # relevant slice into a commit comment so it is always at hand.
+      - name: Run the suite
+        id: suite
+        run: |
+          set +e
+          php artisan test --colors=never 2>&1 | tee "$RUNNER_TEMP/pest.log"
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Publish failure excerpt
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          log="$RUNNER_TEMP/pest.log"
+          { echo "$(php artisan --version 2>/dev/null) on PHP $(php -r 'echo PHP_VERSION;')"
+            echo
+            grep -E 'Tests:' "$log" | tail -1
+            echo
+            echo '```'
+            grep -E '^  ⨯' "$log" | head -80
+            echo '```'
+            echo
+            echo 'Failure details (tail of the run):'
+            echo
+            echo '```'
+            tail -c 40000 "$log"
+            echo '```'
+          } > "$RUNNER_TEMP/excerpt.md"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/comments" \
+            -f body="$(cat "$RUNNER_TEMP/excerpt.md")" >/dev/null \
+            && echo "failure excerpt published as a commit comment" \
+            || echo "::warning::could not publish failure excerpt"
+
+      - name: Upload failure output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failures-php-${{ matrix.php }}
+          path: |
+            storage/logs/*.log
+            .phpunit.result.cache
+          if-no-files-found: ignore

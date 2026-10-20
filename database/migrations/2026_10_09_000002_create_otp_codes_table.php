@@ -14,7 +14,11 @@ return new class extends Migration
         Schema::create('otp_codes', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->enum('purpose', ['activation', 'login']);
+            // Purposes grow with the product: contract acceptance (phase 1)
+            // and step-up approval for releases (phase 3). Keep this list in
+            // step with the OtpPurpose enum - a purpose the database does not
+            // know about fails the insert, not the request.
+            $table->enum('purpose', ['activation', 'login', 'contract_acceptance', 'step_up_release']);
             $table->string('code_hash');
             $table->enum('channel', ['email', 'sms']);
             $table->timestamp('expires_at');

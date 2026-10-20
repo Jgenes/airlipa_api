@@ -35,6 +35,12 @@ class DisputeCaseResource extends JsonResource
             'sla_deadline_at' => $this->sla_deadline_at?->toIso8601String(),
             'decided_at' => $this->decided_at?->toIso8601String(),
             'appeal_deadline_at' => $this->appeal_deadline_at?->toIso8601String(),
+            'appeal_count' => (int) $this->appeal_count,
+            'original_decision_outcome' => $this->original_decision_outcome,
+            'appeal_reason' => $this->appeal_reason,
+            'appealed_at' => $this->appealed_at?->toIso8601String(),
+            'case_file_path' => $this->case_file_path,
+            'case_file_generated_at' => $this->case_file_generated_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }

@@ -296,6 +296,89 @@ Service 2 implements the **Airlipa One Protected Payment Core** (excluding e-com
 
 ---
 
+## Service 3: Escrow Contracts (Two-Party Agreement Layer, Phase 1)
+
+Service 3 adds the full two-party escrow contract lifecycle on top of the Protected Payment core. The initiator (buyer **or** seller) drafts a contract, shares it over every channel, and the counterparty accepts it with an OTP-backed e-signature. Acceptance mints the underlying `ProtectedPayment` (Figure 5 state machine) and opens the subledger set atomically.
+
+- **Lifecycle**: `DRAFT -> SHARED -> ACCEPTED` with `REJECTED`, `EXPIRED` (hourly `escrow-contracts:expire-overdue` job) and `CANCELLED` branches. Server-side enforcement only; every transition is audit-logged.
+- **Sharing channels**: WhatsApp (`wa.me` deep link), SMS (gateway driver), Email (HTML template + link), QR (scannable payload), and copyable secure link. Each share carries a **signed, expiring, single-contract HMAC token** (`{contractId}.{expiry}.{hmac}`); views are tracked per channel (`CREATED/DELIVERED/OPENED`, `view_count`, `opened_at`).
+- **Acceptance & e-signature**: counterparty may view anonymously but must register + verify by OTP (`contract_acceptance` purpose). The signature row stores name, phone, IP, device, SHA-256 `contract_hash` of the canonical final terms and the OTP verification timestamp. Contracts are immutable after acceptance.
+- **Counter-proposals**: `request-changes` creates version *n+1* (`PENDING_INITIATOR_APPROVAL`); the initiator's approval makes it `CURRENT`, supersedes older versions and re-opens the acceptance window. Stale-version links cannot be accepted.
+- **Subledger foundation** (Phase 1 of the ledger programme): `contract_subledger_accounts` (Deposited / Available / Held-for-Milestones / Frozen / Pending-Release / Pending-Refund / Released / Refunded / Fees buckets), `milestone_subledger_accounts`, `party_subledger_accounts`, `dispute_holds`, `fee_records`, append-only `subledger_entries`, `balance_snapshots` (daily close via `ledger:snapshot-subledgers`) and `suspense_items`.
+- **Invariants**: money conservation (`deposited == available + held + frozen + pending_release + pending_refund + released + refunded`), row-locked bucket transfers, operation-level idempotency keys (replayed webhooks never move funds twice), overspend rejection, and portfolio scans consumed by reconciliation. Deposit/release/refund/dispute postings wire into these buckets in Phases 2-4.
+
+### Escrow Contract API Endpoints (`/api/v1`)
+
+| Module | Method | Endpoint | Description |
+|--------|--------|----------|-------------|
+| M1 Contracts | `POST` | `/api/v1/contracts` | Create a DRAFT escrow contract (roles, milestones, terms, fee payer) |
+| M1 Contracts | `GET` | `/api/v1/contracts` | List contracts I initiated or was invited to |
+| M1 Contracts | `GET` | `/api/v1/contracts/{id}` | Contract detail with versions, signatures and subledger (parties only) |
+| M1 Contracts | `PATCH` | `/api/v1/contracts/{id}` | Edit while DRAFT (refreshes terms hash) |
+| M2 Sharing | `POST` | `/api/v1/contracts/{id}/share` | Share via `WHATSAPP,SMS,EMAIL,QR,LINK`; initiator e-signs; returns tokens/payloads |
+| M2 Sharing | `GET` | `/api/v1/contracts/share/{token}` | Public read-only view via signed token; tracks opened/viewed |
+| M3 Acceptance | `POST` | `/api/v1/contracts/share/{token}/acceptance-otp` | Issue acceptance OTP to the named counterparty |
+| M3 Acceptance | `POST` | `/api/v1/contracts/share/{token}/accept` | OTP + e-signature acceptance; mints Protected Payment & opens subledgers |
+| M3 Acceptance | `POST` | `/api/v1/contracts/share/{token}/reject` | Reject with reason |
+| M3 Versioning | `POST` | `/api/v1/contracts/share/{token}/request-changes` | Counter-proposal (new version pending initiator approval) |
+| M3 Versioning | `POST` | `/api/v1/contracts/{id}/versions/{version}/approve` | Initiator approves a counter-proposal |
+| M1 Contracts | `POST` | `/api/v1/contracts/{id}/cancel` | Cancel while DRAFT/SHARED |
+
+### Spec vs. design-pack reconciliation
+
+The product brief's textual state machine (`DRAFT -> SHARED -> ACCEPTED -> AWAITING_DEPOSIT -> FUNDED -> ...`) and the design pack figures (Figure 5: `DRAFT -> PAYMENT_PENDING -> FUNDED_PROTECTED -> FULFILMENT_IN_PROGRESS -> AWAITING_ACCEPTANCE -> ...`) describe the same money flow at two altitudes. Per the working instructions the figures are authoritative: the **contract layer** owns `DRAFT/SHARED/ACCEPTED/...` (agreement between parties) and hands off to the **Protected Payment state machine** (Figure 5) for custody, fulfilment, dispute-freeze and settlement. `AWAITING_ACCEPTANCE` in Figure 5 remains the buyer's *delivery* acceptance, distinct from contract acceptance in Module 3.
+
+---
+
+## Service 4: Selcom Deposits & Dynamic QR (Phase 2)
+
+Phase 2 wires the deposit side of the escrow platform to **Selcom as the single licensed payment partner**: one pooled escrow account, all rails (Airtel Money, M-Pesa, Tigo Pesa/Mixx by Yas, Halopesa, Selcom Pay, bank transfer, Airtel Lipa, TanQR) collected through it.
+
+- **SelcomProvider** (`app/Services/PaymentProviders/SelcomProvider.php`) implements the provider-neutral `PaymentProviderAdapterInterface` (initiateCollection / queryStatus / executeRelease / executeRefund / webhook sign+verify). Sandbox mode is a deterministic in-process mock; live mode talks HTTP with idempotency keys and safe-fails to `UNKNOWN` on gateway errors.
+- **Posting-rules engine** (`app/Services/Ledger/PostingRulesEngine.php`): every business event maps to versioned, balanced journal lines - `DEPOSIT_CONFIRMED`, `DEPOSIT_OVERPAYMENT_SUSPENSE`, `DEPOSIT_PARTIAL_HELD` live now; release/refund/dispute/fee-sweep rules register here in later phases. Catalogue exposed at `GET /api/v1/ledger/posting-rules`. No ad-hoc postings.
+- **Deposit postings**: a verified Selcom confirmation posts the GL funding journal AND, in the same transaction, credits the contract subledger (Deposited/Available), earmarks milestone contracts into `held_milestones`, funds each milestone sub-account, and raises buyer `funded` / seller `entitled` party positions - all append-only and idempotent per funding journal.
+- **Overpayments** fund only the payable total; the excess is journaled to `1300-SUSPENSE-UNRECONCILED`, recorded as an UNMATCHED suspense item with a HIGH reconciliation exception for refund/matcher approval. **Part payments** never fund: they are held in suspense with bilingual buyer notification.
+- **Dynamic deposit QR** (`GET /api/v1/protected-payments/{id}/deposit-qr`, `GET /api/v1/contracts/{id}/deposit-qr`): TanQR/EMVCo TLV payload with the exact amount, contract reference and pooled-account Lipa Namba, CRC16-CCITT checksummed; scannable from any wallet or bank app.
+- Instant bilingual (EN/SW) outbox notifications to both parties on confirmed deposits.
+
+---
+
+## Service 5: Release, Payouts & Delivery Handshake (Phase 3)
+
+Phase 3 completes the outbound side of escrow: money can only leave the pooled Selcom account on a verified, authorised chain of events.
+
+- **Reserve before you pay**: `RELEASE_REQUESTED` moves contract `available -> pending_release` and, for the seller, `entitled -> held` *before* the provider call. If Selcom rejects the disbursement the reservation is reversed and the funds return to `available`; a release can never be spent twice while in flight.
+- **Provider-confirmed release**: on success the contract and milestone subledgers move `pending_release -> released`, then `LedgerService::postProtectedRelease` posts the balanced GL journal with proportional merchant fee/VAT and deferred buyer-fee recognition.
+- **Payout controls** (`POST /api/v1/protected-payments/{id}/settle-payout`): destination account name must match the merchant's KYC/KYB name (AML), high-value payouts require step-up (`step_up_password` or `handover_otp`), and payouts at/above the dual-control threshold require a prior independent `LARGE_PAYOUT` maker-checker approval (creator != approver). Settlement moves the seller position `held -> paid_out`.
+- **Retry with backoff**: a provider rejection records a `PENDING` instruction with `retry_count`/`next_retry_at` and dispatches `RetryFailedPayoutJob` (1min, 5min, 25min), reusing the same idempotency key so one provider effect maps to one journal effect. After the final attempt the instruction is `BLOCKED` and escalated to Finance, with the merchant told the funds remain safe in escrow.
+- **QR delivery handshake**: sellers issue a single-use, expiring delivery code (`POST /protected-payments/{id}/delivery-qr`); only the buyer can consume it (`POST /protected-payments/{id}/confirm-delivery`), which flips fulfilment to `DELIVERED_CONFIRMED` and the agreement to `AWAITING_ACCEPTANCE`. Replays and expired codes are refused.
+
+---
+
+## Service 6: Disputes, Appeals & Refunds (Phase 4)
+
+- **Freeze is real**: opening a dispute posts the `DISPUTE_FREEZE` GL journal *and* moves the disputed amount `available -> frozen` in the contract subledger, records a `dispute_holds` row, and blocks payout settlement (409) until resolved.
+- **Timeline + chat**: every case carries an append-only chronological record - system events (`TIMELINE`), party/admin chat (`MESSAGE`, optional staff-only `internal` notes), decisions (`DECISION`) and appeals (`APPEAL`). Endpoints: `GET /disputes/{caseId}/timeline`, `POST /disputes/{caseId}/messages`.
+- **Mediator decisions** (`POST /admin/disputes/{caseId}/resolve`): `FULL_REFUND_BUYER`, `FULL_RELEASE_MERCHANT` or a `PARTIAL_SPLIT` whose legs must sum to the frozen amount. Execution settles the hold `frozen -> released / refunded` and keeps full conservation; segregation of duties is enforced (no party, no case opener, no self-review).
+- **One appeal** (`POST /disputes/{caseId}/appeal`): only parties, only inside the configured window, only once. An appealed case is locked against further financial decisions; an independent reviewer (`POST /admin/disputes/{caseId}/appeal-decision`) upholds (`CLOSED`) or escalates (`UNDER_REVIEW`). Money already paid out is never silently rewritten - changes require reversal postings.
+- **Refunds** (`POST /protected-payments/{id}/refunds`, `GET .../refunds`): full, partial or milestone-scoped, defaulting to the buyer's original Selcom method. Reserved `available -> pending_refund` before the provider call, then `pending_refund -> refunded` with the buyer's party position moving `funded -> refunded` and the seller's entitlement reduced. Provider rejection reverses the reservation (reversal-only, no edits). Each refund is tracked as a `RefundRequest` with its own idempotency key.
+- **PDF case file** (`GET /disputes/{caseId}/case-file`): dependency-free PDF 1.4 dossier (parties, amounts, decision, appeal state, full timeline) with a SHA-256 integrity digest returned in `X-Case-File-SHA256`.
+
+---
+
+## Service 7: Admin, Reconciliation & Growth Surfaces (Phase 5)
+
+- **KYC/AML tiers** (`GET /me/trading-limits`): tiers `TIER_0` (browse only) through `TIER_3` (enhanced due diligence, business KYB). Limits per tier are integer minor units in `config/aml_tiers.php`; contract creation *and* counterparty acceptance are blocked before the ledger when an amount breaches the single-transaction or rolling 30-day cap. AML high-risk users are never auto-promoted; compliance can assign a tier manually (`PATCH /admin/users/{id}/aml-tier`, audit-logged).
+- **Ledger explorer** (`/admin/ledger/accounts`, `.../accounts/{code}`, `.../journals/{id}`, `.../contracts/{id}`): drill from a control-account balance to individual postings, to the balanced journal, to the contract subledger buckets and append-only entries behind it.
+- **Reconciliation dashboard** (`GET /admin/reconciliation/dashboard`) reconciles three legs: (1) contract subledger held total, (2) GL protected + dispute-frozen liabilities, (3) the GL clearing balance against the ingested Selcom pooled-account statement, plus suspense, dispute holds, fee deferrals and trial-balance checks.
+- **Invariant check + automatic freeze** (`POST /admin/reconciliation/invariant-check`, scheduled every 30 min by `escrow:reconcile-invariant`): any breach raises a CRITICAL exception and **freezes payouts platform-wide**; every disbursement path calls `assertNotFrozen()` and returns 409. Clearing the freeze is an explicit, audited admin action (`DELETE /admin/payout-freeze`) — never automatic.
+- **Reports & CSV** (`/admin/reports/escrow-register[.csv]`, `/admin/reports/settlements[.csv]`, `/reports/statements.csv`): dependency-free RFC 4180 exports for finance, partners and regulators.
+- **Ratings** (`POST /contracts/{id}/rating`, `GET /users/{id}/reputation`): one immutable rating per party per contract, buyer-to-seller and seller-to-buyer aggregates exposed on the public trust surface.
+- **Analytics** (`/admin/analytics/overview`, `/admin/analytics/timeseries`): funnel (created → accepted → funded), volume, dispute rate and average resolution hours, payout health, tier distribution and provider mix, all derived from canonical tables so analytics can never drift from the ledger.
+- **Reminders** (`escrow:send-reminders`, hourly): bilingual EN/SW nudges for closing acceptance windows, overdue delivery, closing inspection windows and payouts awaiting retry, deduped per subject/user/day.
+
+---
+
 ## Running Automated Feature Tests
 
 Execute the Pest test suite:
@@ -320,3 +403,74 @@ php artisan test --filter=PaymentLinkAndAgreementTest
 php artisan test --filter=OrchestrationAndWebhookTest
 php artisan test --filter=LifecycleReleaseRefundDisputeTest
 ```
+
+---
+
+## Verification (no Composer required)
+
+The Pest suite is the definitive gate, but it needs `composer install` and a
+full PHP runtime. The repository also ships a four-layer ladder that runs on a
+bare checkout — no vendor directory, no extensions beyond the standard CLI:
+
+> **Status of this environment:** there is no system PHP or Composer in a bare
+> sandbox, and Packagist is unreachable, so the Pest suite cannot run there.
+> `docs/verification.md` records what each environment can and cannot prove,
+> the commands, and the rule that the suite is never reported as passing on the
+> strength of a local run.
+
+```bash
+bash tools/verify.sh            # full ladder (~2.5 min)
+bash tools/verify.sh --fast     # skip the per-file lint (~1 s)
+```
+
+If PHP or the tree-sitter grammar are installed somewhere other than `PATH`,
+point the runner at them:
+
+```bash
+PHP_BIN=/path/to/php PYTHON_BIN=/path/to/python bash tools/verify.sh
+```
+
+| Layer | Tool | What it actually proves |
+| --- | --- | --- |
+| 1. Syntax | `php -l` over `app config database routes tests bootstrap public`, then `tools/php_syntax_check.py` | Every PHP file parses under PHP 8 — including fatal errors such as a duplicated `use` import, which `php -l` reports but a bare parse check misses. The tree-sitter grammar is the fallback when no PHP binary exists. |
+| 2. Money logic | `php tools/logic_tests.php` | 10 assertions over the framework-free core: CRC16-CCITT check value, deposit/overpayment/part-payment posting rules balance and hit the right control accounts, zero-value legs are omitted, unknown events are refused, the posting-rule catalogue covers deposits, the EMVCo QR payload has the right tags and checksum, and KYC tier ranking round-trips. |
+| 3. Semantics | `python3 tools/semantic_checks.py` | Route controller classes exist, are imported in their route file, and expose the action named; `use` imports resolve to real files; enum cases referenced in code exist; Blade mail views named by Mailables exist (both `->view()` and `new Content(view:)`); `config('group.key')` groups have files; injected service methods exist on the resolved type; model enum casts fit the enum column declared in the migrations. |
+| 4. Test suite | `vendor/bin/pest` | The Pest feature suite — skipped with a notice until `composer install` has been run. |
+
+The static layers are not decorative: each check was mutation-tested by
+injecting a realistic defect into a scratch copy of the tree and confirming it
+fails. Duplicate `use Illuminate\Support\Facades\Hash;` in
+`PayoutSettlementService` (a Zend fatal on every payout request), a renamed
+controller action, an un-imported controller, a typo in an injected-service
+method, a bad enum case, a renamed Blade view and a missing config group were
+all caught this way and fixed — and so was the `enum_column_drift` check itself,
+after CI found that `otp_codes.purpose` still only allowed `activation`/`login`
+while `OtpPurpose` had grown acceptance and step-up cases.
+
+CI (`.github/workflows/ci.yml`) runs the same ladder in a `static` job —
+`php -l`, logic tests, tree-sitter, semantic checks — before a PHP 8.2/8.3
+matrix installs Composer and executes `php artisan test`. The static job needs
+no `vendor/`, so a broken import or route fails the pipeline in under a minute
+instead of after a full dependency install.
+
+### The first real execution
+
+The suites had never been run when they were written. Running them for the
+first time found real defects, not just wrong assertions — this is the record:
+
+| Symptom | Cause |
+| --- | --- |
+| Every contract share/accept failed | `User` has `first_name`/`last_name`; the signature row read `full_name` and `name`, both null, and hit `NOT NULL`. |
+| 20 tests died on `CHECK constraint failed: purpose` | `otp_codes.purpose` still allowed only `activation`/`login` after acceptance and step-up OTPs were added. |
+| All escrow subledger movement silently skipped | `ProtectedPaymentService` declared the subledger, outbox and risk engine as optional constructor params with `null` defaults; the container supplied `null`. Releases, refunds and payouts never moved a bucket, and risk scoring and notifications were skipped too — with no error anywhere. |
+| Releases and refunds double-counted nothing | Confirm and reversal steps reused the reserve step's idempotency key, so they matched existing entries and no-op'd. |
+| Every share link collided | Token was `contractId.expiry.hmac` — identical for all channels shared in the same second. |
+| Handover QR scan returned 500 | Delivery tokens are stored as sha256 and were verified with `Hash::check`. |
+| Daily close found nothing it had just written | A `date` cast stored `Y-m-d H:i:s`, so the exact-match read of the same day missed. |
+| Payout with step-up returned 500 | The transaction closure did not capture `$data`. |
+| Every business merchant looked like an individual | `user_type->value === 'business'` compared against a migration that spells it `Business`. |
+| Milestone releases failed with insufficient balance | Milestone funding sits in `held_milestones_minor`, but reserves drew from `available_minor`. |
+| A duplicated `use Hash` import | `php -l` only — a Zend fatal on every payout request. |
+
+Status: `php artisan test` passes on PHP 8.2 and 8.3 (132 tests, ~930
+assertions), and the static ladder is green.

@@ -1,9 +1,13 @@
 <?php
 
+use App\Http\Controllers\Api\V1\AdminInsightsController;
 use App\Http\Controllers\Api\V1\AdminKybController;
+use App\Http\Controllers\Api\V1\AdminLedgerController;
 use App\Http\Controllers\Api\V1\AdminOperationsController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\ContractShareController;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\EscrowContractController;
 use App\Http\Controllers\Api\V1\DisputeController;
 use App\Http\Controllers\Api\V1\KybController;
 use App\Http\Controllers\Api\V1\KycController;
@@ -63,8 +67,15 @@ Route::prefix('v1')->group(function () {
     Route::get('merchants/{merchantId}/trust-profile', [MerchantTrustController::class, 'show'])
         ->name('merchants.trust-profile');
 
+    // Phase 5: public escrow reputation (ratings aggregate)
+    Route::get('users/{userId}/reputation', [AdminInsightsController::class, 'reputation'])->whereNumber('userId');
+
     Route::get('payment-links/{token}', [PaymentLinkController::class, 'preview'])
         ->name('payment-links.preview');
+
+    // Public, signed, expiring escrow contract share view (Module 2)
+    Route::get('contracts/share/{token}', [ContractShareController::class, 'publicShow'])
+        ->name('contracts.share.public');
 
     Route::post('webhooks/providers/{providerCode}', [ProviderWebhookController::class, 'handleWebhook'])
         ->name('webhooks.providers.handle');
@@ -100,13 +111,46 @@ Route::prefix('v1')->group(function () {
     // Fully Authenticated User Endpoints
     // ==========================================
     Route::middleware(['auth:sanctum'])->group(function () {
+        // Phase 5: personal KYC/AML tier summary and CSV statement export
+        Route::get('me/trading-limits', [AdminInsightsController::class, 'myLimits']);
+        Route::get('reports/statements.csv', [AdminInsightsController::class, 'myStatementCsv']);
+
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::post('auth/logout-all', [AuthController::class, 'logoutAll']);
+
+        // ==========================================
+        // Escrow contract share-token actions (Module 3): the counterparty may
+        // hold a basic-tier (phone verified) account, so full KYC is not forced.
+        // ==========================================
+        Route::prefix('contracts/share/{token}')->group(function () {
+            Route::post('acceptance-otp', [ContractShareController::class, 'requestAcceptanceOtp'])
+                ->middleware('throttle:10,1');
+            Route::post('accept', [ContractShareController::class, 'accept'])
+                ->middleware('throttle:10,1');
+            Route::post('reject', [ContractShareController::class, 'reject']);
+            Route::post('request-changes', [ContractShareController::class, 'requestChanges']);
+        });
 
         // Endpoints requiring verified status (or business with submitted KYB)
         Route::middleware(['ensure.fully.verified'])->group(function () {
             Route::get('dashboard', [DashboardController::class, 'index']);
             Route::get('profile', [ProfileController::class, 'show']);
+
+            // ==========================================
+            // Escrow contracts: draft, share, version approval, cancel (Modules 1-3)
+            // ==========================================
+            Route::prefix('contracts')->group(function () {
+                Route::get('/', [EscrowContractController::class, 'index']);
+                Route::post('/', [EscrowContractController::class, 'store']);
+                Route::get('{id}', [EscrowContractController::class, 'show'])->whereNumber('id');
+                Route::patch('{id}', [EscrowContractController::class, 'update'])->whereNumber('id');
+                Route::post('{id}/rating', [AdminInsightsController::class, 'rateContract'])->whereNumber('id');
+                Route::get('{id}/deposit-qr', [EscrowContractController::class, 'depositQr'])->whereNumber('id');
+                Route::post('{id}/share', [EscrowContractController::class, 'share'])->whereNumber('id');
+                Route::post('{id}/versions/{version}/approve', [EscrowContractController::class, 'approveVersion'])
+                    ->whereNumber('id')->whereNumber('version');
+                Route::post('{id}/cancel', [EscrowContractController::class, 'cancel'])->whereNumber('id');
+            });
 
             // M18: Approved Payment Providers
             Route::get('providers', [ProviderWebhookController::class, 'listProviders']);
@@ -134,6 +178,11 @@ Route::prefix('v1')->group(function () {
                 Route::post('/', [ProtectedPaymentController::class, 'store']);
                 Route::get('{id}', [ProtectedPaymentController::class, 'show']);
                 Route::post('{id}/pay', [ProtectedPaymentController::class, 'initiatePayment']);
+                Route::get('{id}/deposit-qr', [ProtectedPaymentController::class, 'depositQr']);
+                Route::post('{id}/delivery-qr', [ProtectedPaymentController::class, 'issueDeliveryQr'])
+                    ->middleware('throttle:10,1');
+                Route::post('{id}/confirm-delivery', [ProtectedPaymentController::class, 'confirmDelivery'])
+                    ->middleware('throttle:10,1');
                 Route::get('{id}/status-recovery', [ProtectedPaymentController::class, 'statusRecovery']);
                 Route::get('{id}/payment-status', [ProtectedPaymentController::class, 'statusRecovery']);
                 Route::post('{id}/simulate-provider-callback', [ProtectedPaymentController::class, 'simulateProviderCallback']);
@@ -143,12 +192,21 @@ Route::prefix('v1')->group(function () {
                 Route::post('{id}/settle-payout', [PayoutSettlementController::class, 'settlePayout']);
                 Route::get('{id}/receipt', [ProtectedPaymentController::class, 'receipt']);
                 Route::get('{id}/journals', [ProtectedPaymentController::class, 'journals']);
+                Route::post('{id}/refunds', [ProtectedPaymentController::class, 'requestRefund'])
+                    ->middleware('throttle:10,1');
+                Route::get('{id}/refunds', [ProtectedPaymentController::class, 'refundHistory']);
                 Route::post('{id}/disputes', [DisputeController::class, 'store']);
             });
 
             // M11: Disputes & Customer Protection
             Route::get('disputes/{caseId}', [DisputeController::class, 'show']);
             Route::post('disputes/{caseId}/resolve', [DisputeController::class, 'resolve']);
+            Route::get('disputes/{caseId}/timeline', [DisputeController::class, 'timeline']);
+            Route::post('disputes/{caseId}/messages', [DisputeController::class, 'storeMessage'])
+                ->middleware('throttle:30,1');
+            Route::post('disputes/{caseId}/appeal', [DisputeController::class, 'appeal'])
+                ->middleware('throttle:5,1');
+            Route::get('disputes/{caseId}/case-file', [DisputeController::class, 'caseFile']);
 
             // M14: Merchant Payout Accounts & Settlements
             Route::get('payout-accounts', [PayoutSettlementController::class, 'indexAccounts']);
@@ -157,6 +215,7 @@ Route::prefix('v1')->group(function () {
 
             // M08: Operational Financial Sub-Ledger Obligations Summary
             Route::get('ledger/obligations-summary', [LedgerController::class, 'obligationsSummary']);
+            Route::get('ledger/posting-rules', [LedgerController::class, 'postingRules']);
 
             // M12: Bilingual (EN/SW) User Notifications
             Route::get('notifications', [NotificationController::class, 'index']);
@@ -186,8 +245,9 @@ Route::prefix('v1')->group(function () {
         Route::patch('providers/{providerCode}/status', [ProviderWebhookController::class, 'updateCapabilityStatus']);
         Route::patch('providers/{providerCode}', [ProviderWebhookController::class, 'updateCapabilityStatus']);
 
-        // M11: Dispute Analyst Resolution
+        // M11: Dispute Analyst Resolution & Appeals
         Route::post('disputes/{caseId}/resolve', [DisputeController::class, 'resolve']);
+        Route::post('disputes/{caseId}/appeal-decision', [DisputeController::class, 'decideAppeal']);
 
         // M09: 3-Way Reconciliation Runs & Exceptions Queue
         Route::post('reconciliation/runs', [AdminOperationsController::class, 'executeReconciliationRun']);
@@ -200,6 +260,28 @@ Route::prefix('v1')->group(function () {
 
         // M16: Trial Balance & Regulatory Safeguarding Proof Pack
         Route::get('reports/trial-balance', [ReportController::class, 'trialBalance']);
+        Route::get('reports/escrow-register', [AdminInsightsController::class, 'escrowRegister']);
+        Route::get('reports/escrow-register.csv', [AdminInsightsController::class, 'escrowRegister']);
+        Route::get('reports/settlements', [AdminInsightsController::class, 'settlementRegister']);
+        Route::get('reports/settlements.csv', [AdminInsightsController::class, 'settlementRegister']);
+
+        // Phase 5: ledger explorer drill-down
+        Route::get('ledger/accounts', [AdminLedgerController::class, 'accounts']);
+        Route::get('ledger/accounts/{accountCode}', [AdminLedgerController::class, 'accountDetail']);
+        Route::get('ledger/journals/{journalId}', [AdminLedgerController::class, 'journal']);
+        Route::get('ledger/contracts/{contractId}', [AdminLedgerController::class, 'contract']);
+
+        // Phase 5: reconciliation dashboard, invariant check and payout freeze control
+        Route::get('reconciliation/dashboard', [AdminLedgerController::class, 'dashboard']);
+        Route::post('reconciliation/invariant-check', [AdminLedgerController::class, 'runInvariantCheck']);
+        Route::post('reconciliation/partner-statements', [AdminLedgerController::class, 'ingestPartnerStatement']);
+        Route::post('payout-freeze', [AdminLedgerController::class, 'activateFreeze']);
+        Route::delete('payout-freeze', [AdminLedgerController::class, 'releaseFreeze']);
+
+        // Phase 5: analytics + AML tier administration
+        Route::get('analytics/overview', [AdminInsightsController::class, 'overview']);
+        Route::get('analytics/timeseries', [AdminInsightsController::class, 'timeseries']);
+        Route::patch('users/{userId}/aml-tier', [AdminInsightsController::class, 'updateAmlTier'])->whereNumber('userId');
         Route::get('reports/safeguarding-proof-pack', [ReportController::class, 'safeguardingProofPack']);
 
         // M17: Maker-Checker Dual Control & Tamper-Evident Audit Hash Chain Verification

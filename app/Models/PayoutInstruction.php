@@ -24,6 +24,10 @@ class PayoutInstruction extends Model
         'status',
         'ledger_journal_id',
         'executed_at',
+        'metadata',
+        'retry_count',
+        'next_retry_at',
+        'last_failure_reason',
     ];
 
     protected function casts(): array
@@ -34,6 +38,9 @@ class PayoutInstruction extends Model
             'merchant_tax_minor' => 'integer',
             'net_payout_minor' => 'integer',
             'executed_at' => 'datetime',
+            'metadata' => 'array',
+            'retry_count' => 'integer',
+            'next_retry_at' => 'datetime',
         ];
     }
 

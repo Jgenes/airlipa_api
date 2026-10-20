@@ -9,6 +9,8 @@ enum ProtectedPaymentStatus: string
     case PaymentProcessing = 'PAYMENT_PROCESSING';
     case FundedPendingPosting = 'FUNDED_PENDING_POSTING';
     case FundedProtected = 'FUNDED_PROTECTED';
+    case FulfillmentInProgress = 'FULFILLMENT_IN_PROGRESS';
+    case AwaitingAcceptance = 'AWAITING_ACCEPTANCE';
     case FulfillmentSubmitted = 'FULFILLMENT_SUBMITTED';
     case PartiallyReleased = 'PARTIALLY_RELEASED';
     case ReleaseApproved = 'RELEASE_APPROVED';
@@ -49,6 +51,14 @@ enum ProtectedPaymentStatus: string
             self::FundedProtected => [
                 'en' => 'Payment is protected with the licensed payment provider. The merchant may now fulfil the order.',
                 'sw' => 'Malipo yanalindwa kwa mtoa huduma aliyeidhinishwa. Mfanyabiashara anaweza kutekeleza huduma au mzigo sasa.',
+            ],
+            self::FulfillmentInProgress => [
+                'en' => 'The seller is fulfilling the agreement. Your money stays protected until you confirm delivery.',
+                'sw' => 'Muuzaji anatekeleza makubaliano. Pesa zako zinalindwa hadi uthibitishe kupokea bidhaa.',
+            ],
+            self::AwaitingAcceptance => [
+                'en' => 'Delivery confirmed. Please accept the goods or open a dispute within the inspection window.',
+                'sw' => 'Makabidhiano yamethibitishwa. Tafadhali kubali bidhaa au fungua malalamiko ndani ya muda wa ukaguzi.',
             ],
             self::FulfillmentSubmitted => [
                 'en' => 'Fulfilment evidence has been submitted. Please review and confirm receipt or open a dispute within the inspection window.',

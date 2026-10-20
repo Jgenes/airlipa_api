@@ -3,10 +3,13 @@
 namespace App\Models;
 
 use App\Enums\AccountStatus;
+use App\Enums\AmlRiskRating;
+use App\Enums\KycTier;
 use App\Enums\KybStatus;
 use App\Enums\KycStatus;
 use App\Enums\UserType;
 use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -62,6 +65,9 @@ class User extends Authenticatable
             'user_type' => UserType::class,
             'kyc_status' => KycStatus::class,
             'kyb_status' => KybStatus::class,
+            'kyc_tier' => KycTier::class,
+            'aml_risk_rating' => AmlRiskRating::class,
+            'tier_assessed_at' => 'datetime',
             'is_active' => 'boolean',
             'failed_login_attempts' => 'integer',
             'locked_until' => 'datetime',
@@ -144,6 +150,22 @@ class User extends Authenticatable
         }
 
         return $this->kyb_status === KybStatus::Verified;
+    }
+
+    /**
+     * Single display name assembled from the split name columns.
+     *
+     * The users table stores first_name/last_name, so `$user->name` is null.
+     * Signatures, notices and escrow documents need one string; they read
+     * this accessor instead of guessing a column that does not exist.
+     */
+    protected function fullName(): Attribute
+    {
+        return Attribute::make(
+            get: fn (): string => trim(
+                trim((string) $this->first_name) . ' ' . trim((string) $this->last_name)
+            ),
+        );
     }
 
     /**

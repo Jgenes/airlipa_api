@@ -218,7 +218,9 @@ test('provider webhook with mismatched amount transitions intent to UNKNOWN and 
         'idempotency_key' => 'idem-tpesa-mismatch-001',
     ]);
 
-    // Simulate callback with wrong amount via sandbox helper
+    // Simulate a callback that pays half the expected amount. Phase 2 rules
+    // say an underpayment is held as a partial in suspense - it is never
+    // credited to the agreement and never released.
     $simResponse = $this->postJson("/api/v1/protected-payments/{$protectedPaymentId}/simulate-provider-callback", [
         'status' => 'SUCCEEDED',
         'amount_minor' => 5000000, // Half of expected amount!
@@ -228,13 +230,14 @@ test('provider webhook with mismatched amount transitions intent to UNKNOWN and 
         ->assertJson([
             'success' => true,
             'data' => [
-                'processing_status' => 'MISMATCH_BLOCKED',
-                'intent_status' => 'UNKNOWN',
+                'processing_status' => 'PARTIAL_HELD',
+                'intent_status' => 'PENDING',
             ],
         ]);
 
     expect(ReconciliationException::count())->toBe(1)
-        ->and(LedgerJournal::count())->toBe(0);
+        ->and(LedgerJournal::count())->toBe(1)
+        ->and(LedgerJournal::first()->event_type)->toBe('DEPOSIT_PARTIAL_HELD');
 });
 
 test('admin can suspend a degraded provider capability and new collections on that rail are blocked', function () {

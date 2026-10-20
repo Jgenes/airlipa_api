@@ -54,7 +54,7 @@ test('full lifecycle: funding -> fulfillment evidence -> step-up buyer release -
                 'agreement' => [
                     'states' => [
                         'status' => 'FULFILLMENT_SUBMITTED',
-                        'fulfillment_status' => 'IN_TRANSIT',
+                        'fulfillment_status' => 'EVIDENCE_SUBMITTED',
                         'settlement_status' => 'NOT_ELIGIBLE',
                     ],
                 ],
@@ -85,7 +85,7 @@ test('full lifecycle: funding -> fulfillment evidence -> step-up buyer release -
                 'agreement' => [
                     'states' => [
                         'status' => 'RELEASED',
-                        'fulfillment_status' => 'CONFIRMED',
+                        'fulfillment_status' => 'DELIVERED_CONFIRMED',
                         'settlement_status' => 'ELIGIBLE',
                     ],
                     'money' => [

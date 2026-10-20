@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Enums\OtpChannel;
 use App\Enums\OtpPurpose;
 use App\Mail\ActivationOtpMail;
+use App\Mail\ContractAcceptanceOtpMail;
 use App\Mail\LoginOtpMail;
 use App\Models\OtpCode;
 use App\Models\User;
@@ -30,7 +31,11 @@ class OtpService
      */
     public function generateAndSend(User $user, OtpPurpose $purpose): array
     {
-        $configKey = $purpose === OtpPurpose::Activation ? 'activation' : 'login';
+        $configKey = match ($purpose) {
+            OtpPurpose::Activation => 'activation',
+            OtpPurpose::ContractAcceptance => 'contract_acceptance',
+            default => 'login',
+        };
         $expiryMinutes = (int) config("auth_otp.{$configKey}.expiry_minutes", $purpose === OtpPurpose::Activation ? 10 : 5);
         $maxAttempts = (int) config("auth_otp.{$configKey}.max_attempts", 5);
 
@@ -89,7 +94,11 @@ class OtpService
      */
     public function checkResendEligibility(User $user, OtpPurpose $purpose): array
     {
-        $configKey = $purpose === OtpPurpose::Activation ? 'activation' : 'login';
+        $configKey = match ($purpose) {
+            OtpPurpose::Activation => 'activation',
+            OtpPurpose::ContractAcceptance => 'contract_acceptance',
+            default => 'login',
+        };
         $cooldownSeconds = (int) config("auth_otp.{$configKey}.resend_cooldown_seconds", 60);
         $maxResendsPerHour = (int) config("auth_otp.{$configKey}.max_resends_per_hour", 3);
 
@@ -207,6 +216,8 @@ class OtpService
         try {
             if ($purpose === OtpPurpose::Activation) {
                 Mail::to($user->email)->send(new ActivationOtpMail($user, $code, $expiryMinutes));
+            } elseif ($purpose === OtpPurpose::ContractAcceptance) {
+                Mail::to($user->email)->send(new ContractAcceptanceOtpMail($user, $code, $expiryMinutes));
             } else {
                 Mail::to($user->email)->send(new LoginOtpMail($user, $code, $expiryMinutes));
             }

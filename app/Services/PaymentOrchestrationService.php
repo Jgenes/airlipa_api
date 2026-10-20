@@ -7,10 +7,12 @@ use App\Enums\ProtectedPaymentStatus;
 use App\Enums\SettlementStatus;
 use App\Models\PaymentAttempt;
 use App\Models\PaymentIntent;
+use App\Models\SuspenseItem;
 use App\Models\ProtectedPayment;
 use App\Models\ProviderWebhookEvent;
 use App\Models\ReconciliationException;
 use App\Models\User;
+use App\Services\Ledger\PostingRulesEngine;
 use App\Services\PaymentProviders\PaymentProviderAdapterInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -23,7 +25,9 @@ class PaymentOrchestrationService
     public function __construct(
         protected ProviderRegistryService $providerRegistry,
         protected PaymentProviderAdapterInterface $providerAdapter,
-        protected LedgerService $ledgerService
+        protected LedgerService $ledgerService,
+        protected SubledgerService $subledgerService,
+        protected NotificationOutboxService $outboxService
     ) {}
 
     /**
@@ -333,8 +337,13 @@ class PaymentOrchestrationService
             ];
         }
 
-        // 2. Validate amount & currency against accepted intent (FR-009 exception path: mismatch -> UNKNOWN)
-        if ($amountMinor !== (int) $intent->amount_minor || $currency !== strtoupper($intent->currency)) {
+        // 2. Validate amount & currency against accepted intent (FR-009 exception path: mismatch -> UNKNOWN).
+        // Success callbacks with a same-currency amount variance are NOT mismatches:
+        // they route to the overpayment/part-payment suspense handling below (Module 4).
+        $successLikeStatus = in_array($providerStatus, ['SUCCESS', 'SUCCEEDED', 'COMPLETED', 'PAID'], true);
+        $sameCurrency = $currency === strtoupper($intent->currency);
+
+        if (!$sameCurrency || ($amountMinor !== (int) $intent->amount_minor && !$successLikeStatus)) {
             return DB::transaction(function () use (
                 $eventId,
                 $normalizedProviderCode,
@@ -483,6 +492,125 @@ class PaymentOrchestrationService
             });
         }
 
+        // 4a. Part payment on a success callback: hold in Suspense, do NOT fund (Module 4)
+        $successLike = in_array($providerStatus, ['SUCCESS', 'SUCCEEDED', 'COMPLETED', 'PAID'], true);
+
+        if ($successLike && $currency === strtoupper($intent->currency) && $amountMinor < (int) $intent->amount_minor) {
+            return DB::transaction(function () use (
+                $eventId,
+                $normalizedProviderCode,
+                $providerTxnId,
+                $providerRefStr,
+                $eventType,
+                $attempt,
+                $intent,
+                $payment,
+                $currency,
+                $amountMinor,
+                $messageHash,
+                $payload
+            ): array {
+                $finalProviderRef = $providerTxnId !== '' ? $providerTxnId : ($attempt->provider_reference ?? $providerRefStr);
+
+                $attempt->update([
+                    'provider_reference' => $finalProviderRef,
+                    'raw_provider_status' => 'PARTIAL_PAYMENT_RECEIVED',
+                    'normalized_status' => 'PARTIAL',
+                    'completed_at' => now(),
+                ]);
+
+                $this->ledgerService->postEventJournal(
+                    correlationId: $payment->correlation_id,
+                    eventCode: PostingRulesEngine::EVENT_DEPOSIT_PARTIAL_HELD,
+                    context: [
+                        'received_minor' => $amountMinor,
+                        'buyer_id' => $payment->buyer_id,
+                        'reference' => $payment->reference,
+                        'provider_reference' => $finalProviderRef,
+                        'currency' => $currency,
+                        'description' => "Part payment held in suspense for {$payment->reference}",
+                    ],
+                    idempotencyKey: "jrn_partial_{$payment->protected_payment_id}_{$intent->intent_id}",
+                    protectedPaymentId: $payment->id,
+                    providerReference: $finalProviderRef,
+                    actorUserId: $payment->buyer_id,
+                    metadata: ['intent_id' => $intent->intent_id]
+                );
+
+                SuspenseItem::create([
+                    'suspense_id' => 'sus_' . Str::lower(Str::ulid()),
+                    'provider_code' => $normalizedProviderCode,
+                    'provider_reference' => $finalProviderRef,
+                    'currency' => $currency,
+                    'amount_minor' => $amountMinor,
+                    'received_at' => now(),
+                    'status' => 'UNMATCHED',
+                    'resolution_note' => 'Part payment awaiting top-up or return (Module 4).',
+                ]);
+
+                ReconciliationException::create([
+                    'exception_id' => 'rex_' . Str::lower(Str::ulid()),
+                    'correlation_id' => $payment->correlation_id,
+                    'protected_payment_id' => $payment->id,
+                    'payment_intent_id' => $intent->id,
+                    'provider_code' => $normalizedProviderCode,
+                    'provider_reference' => $finalProviderRef,
+                    'category' => 'PARTIAL_PAYMENT',
+                    'severity' => 'HIGH',
+                    'status' => 'OPEN',
+                    'details' => "Part payment {$currency} {$amountMinor} received against {$intent->amount_minor}. Held in suspense; agreement not funded.",
+                    'sla_due_at' => now()->addHours(24),
+                ]);
+
+                ProviderWebhookEvent::updateOrCreate(
+                    ['event_id' => $eventId],
+                    [
+                        'correlation_id' => $payment->correlation_id,
+                        'provider_code' => $normalizedProviderCode,
+                        'provider_transaction_id' => $finalProviderRef,
+                        'event_type' => $eventType,
+                        'payment_attempt_id' => $attempt->id,
+                        'payment_intent_id' => $intent->id,
+                        'currency' => $currency,
+                        'amount_minor' => $amountMinor,
+                        'signature_key_id' => (string) ($payload['key_id'] ?? 'default'),
+                        'message_hash' => $messageHash,
+                        'signature_valid' => true,
+                        'processing_status' => 'PARTIAL_HELD',
+                        'raw_payload' => $payload,
+                        'occurred_at' => now(),
+                        'processed_at' => now(),
+                    ]
+                );
+
+                $this->outboxService->publishEvent(
+                    'protected_payment',
+                    $payment->protected_payment_id,
+                    'deposit.partial_received',
+                    ['protected_payment_id' => $payment->protected_payment_id, 'received_minor' => $amountMinor],
+                    User::find($payment->buyer_id),
+                    'Part payment received',
+                    sprintf('We received a part payment of TZS %s for %s. It is held safely; top up the balance to activate protection.', number_format($amountMinor / 100, 2), $payment->reference),
+                    'Malipo ya sehemu yamepokelewa',
+                    sprintf('Tumepokea malipo ya sehemu ya TZS %s kwa %s. Yameshikiliwa salama; kamilisha kiasi ili kuwezesha ulinzi.', number_format($amountMinor / 100, 2), $payment->reference)
+                );
+
+                AuditLogService::log('payment_partial_held_in_suspense', null, [
+                    'protected_payment_id' => $payment->protected_payment_id,
+                    'received_minor' => $amountMinor,
+                    'expected_minor' => (int) $intent->amount_minor,
+                ]);
+
+                return [
+                    'duplicate_ignored' => false,
+                    'event_id' => $eventId,
+                    'processing_status' => 'PARTIAL_HELD',
+                    'protected_payment_status' => $payment->status->value,
+                    'intent_status' => $intent->status->value,
+                ];
+            });
+        }
+
         // 4. Handle SUCCEEDED funding confirmation (FR-009)
         return DB::transaction(function () use (
             $eventId,
@@ -499,10 +627,11 @@ class PaymentOrchestrationService
             $payload
         ): array {
             $finalProviderRef = $providerTxnId !== '' ? $providerTxnId : ($attempt->provider_reference ?? $providerRefStr);
+            $overpaymentExcess = max(0, $amountMinor - (int) $intent->amount_minor);
 
             $attempt->update([
                 'provider_reference' => $finalProviderRef,
-                'raw_provider_status' => 'SUCCESS',
+                'raw_provider_status' => $overpaymentExcess > 0 ? 'SUCCESS_WITH_OVERPAYMENT' : 'SUCCESS',
                 'normalized_status' => 'SUCCEEDED',
                 'completed_at' => now(),
             ]);
@@ -539,6 +668,87 @@ class PaymentOrchestrationService
             if (!$payment->fresh()->verifyConservationInvariant()) {
                 throw new \DomainException('Rule 36 conservation of value invariant failed after funding confirmation.');
             }
+
+            // Overpayment: excess stays in clearing but is owed back -> Suspense control (Module 4)
+            if ($overpaymentExcess > 0) {
+                $this->ledgerService->postEventJournal(
+                    correlationId: $payment->correlation_id,
+                    eventCode: PostingRulesEngine::EVENT_DEPOSIT_OVERPAYMENT_SUSPENSE,
+                    context: [
+                        'excess_minor' => $overpaymentExcess,
+                        'buyer_id' => $payment->buyer_id,
+                        'reference' => $payment->reference,
+                        'provider_reference' => $finalProviderRef,
+                        'currency' => $currency,
+                        'description' => "Overpayment excess held in suspense for {$payment->reference}",
+                    ],
+                    idempotencyKey: "jrn_overpay_{$payment->protected_payment_id}_{$intent->intent_id}",
+                    protectedPaymentId: $payment->id,
+                    providerReference: $finalProviderRef,
+                    actorUserId: $payment->buyer_id,
+                    metadata: ['intent_id' => $intent->intent_id]
+                );
+
+                SuspenseItem::create([
+                    'suspense_id' => 'sus_' . Str::lower(Str::ulid()),
+                    'provider_code' => $normalizedProviderCode,
+                    'provider_reference' => $finalProviderRef,
+                    'currency' => $currency,
+                    'amount_minor' => $overpaymentExcess,
+                    'received_at' => now(),
+                    'status' => 'UNMATCHED',
+                    'resolution_note' => 'Overpayment excess pending refund or matcher approval (Module 4).',
+                ]);
+
+                ReconciliationException::create([
+                    'exception_id' => 'rex_' . Str::lower(Str::ulid()),
+                    'correlation_id' => $payment->correlation_id,
+                    'protected_payment_id' => $payment->id,
+                    'payment_intent_id' => $intent->id,
+                    'provider_code' => $normalizedProviderCode,
+                    'provider_reference' => $finalProviderRef,
+                    'category' => 'OVERPAYMENT',
+                    'severity' => 'HIGH',
+                    'status' => 'OPEN',
+                    'details' => "Customer overpaid by {$currency} {$overpaymentExcess}. Excess held in suspense pending refund.",
+                    'sla_due_at' => now()->addHours(24),
+                ]);
+            }
+
+            // Escrow contract subledgers: deposit confirmed postings (contract, milestones, parties)
+            $contract = $payment->escrowContract;
+
+            if ($contract) {
+                $this->subledgerService->applyFundingConfirmed($contract, $payment->fresh(), $journal);
+            }
+
+            // Instant bilingual notifications to both parties (Module 4)
+            $fundedMessageEn = sprintf('Escrow deposit of TZS %s for %s is confirmed and protected.', number_format($principalMinor / 100, 2), $payment->reference);
+            $fundedMessageSw = sprintf('Amana ya TZS %s kwa %s imethibitishwa inalindwa.', number_format($principalMinor / 100, 2), $payment->reference);
+
+            $this->outboxService->publishEvent(
+                'protected_payment',
+                $payment->protected_payment_id,
+                'deposit.confirmed',
+                ['protected_payment_id' => $payment->protected_payment_id, 'funded_minor' => $principalMinor],
+                User::find($payment->buyer_id),
+                'Deposit confirmed / Amana imethibitishwa',
+                $fundedMessageEn,
+                'Amana imethibitishwa',
+                $fundedMessageSw
+            );
+
+            $this->outboxService->publishEvent(
+                'protected_payment',
+                $payment->protected_payment_id,
+                'deposit.confirmed',
+                ['protected_payment_id' => $payment->protected_payment_id, 'funded_minor' => $principalMinor],
+                User::find($payment->merchant_id),
+                'Escrow funded / Eskrow imefadhiliwa',
+                sprintf('The buyer funded %s. You may now fulfil the agreement.', $payment->reference),
+                'Eskrow imefadhiliwa',
+                sprintf('Mnunuaji amefadhili %s. Unaweza kutekeleza makubaliano sasa.', $payment->reference)
+            );
 
             ProviderWebhookEvent::updateOrCreate(
                 ['event_id' => $eventId],
