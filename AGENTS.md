@@ -24,6 +24,7 @@ This project has domain-specific skills available in `**/skills/**`. You MUST ac
 ## Verification Scripts
 
 - Do not create verification scripts or tinker when tests cover that functionality and prove they work. Unit and feature tests are more important.
+- Verify every change with `bash tools/verify.sh` (see `docs/verification.md`). The sandbox has no Composer and no Packagist access, so the Pest suite only runs in CI — never describe it as passing without a CI run.
 
 ## Application Structure & Architecture
 

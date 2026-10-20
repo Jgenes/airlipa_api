@@ -412,6 +412,12 @@ The Pest suite is the definitive gate, but it needs `composer install` and a
 full PHP runtime. The repository also ships a four-layer ladder that runs on a
 bare checkout — no vendor directory, no extensions beyond the standard CLI:
 
+> **Status of this environment:** there is no system PHP or Composer in a bare
+> sandbox, and Packagist is unreachable, so the Pest suite cannot run there.
+> `docs/verification.md` records what each environment can and cannot prove,
+> the commands, and the rule that the suite is never reported as passing on the
+> strength of a local run.
+
 ```bash
 bash tools/verify.sh            # full ladder (~2.5 min)
 bash tools/verify.sh --fast     # skip the per-file lint (~1 s)
