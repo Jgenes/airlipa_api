@@ -343,6 +343,18 @@ Phase 2 wires the deposit side of the escrow platform to **Selcom as the single 
 
 ---
 
+## Service 5: Release, Payouts & Delivery Handshake (Phase 3)
+
+Phase 3 completes the outbound side of escrow: money can only leave the pooled Selcom account on a verified, authorised chain of events.
+
+- **Reserve before you pay**: `RELEASE_REQUESTED` moves contract `available -> pending_release` and, for the seller, `entitled -> held` *before* the provider call. If Selcom rejects the disbursement the reservation is reversed and the funds return to `available`; a release can never be spent twice while in flight.
+- **Provider-confirmed release**: on success the contract and milestone subledgers move `pending_release -> released`, then `LedgerService::postProtectedRelease` posts the balanced GL journal with proportional merchant fee/VAT and deferred buyer-fee recognition.
+- **Payout controls** (`POST /api/v1/protected-payments/{id}/settle-payout`): destination account name must match the merchant's KYC/KYB name (AML), high-value payouts require step-up (`step_up_password` or `handover_otp`), and payouts at/above the dual-control threshold require a prior independent `LARGE_PAYOUT` maker-checker approval (creator != approver). Settlement moves the seller position `held -> paid_out`.
+- **Retry with backoff**: a provider rejection records a `PENDING` instruction with `retry_count`/`next_retry_at` and dispatches `RetryFailedPayoutJob` (1min, 5min, 25min), reusing the same idempotency key so one provider effect maps to one journal effect. After the final attempt the instruction is `BLOCKED` and escalated to Finance, with the merchant told the funds remain safe in escrow.
+- **QR delivery handshake**: sellers issue a single-use, expiring delivery code (`POST /protected-payments/{id}/delivery-qr`); only the buyer can consume it (`POST /protected-payments/{id}/confirm-delivery`), which flips fulfilment to `DELIVERED_CONFIRMED` and the agreement to `AWAITING_ACCEPTANCE`. Replays and expired codes are refused.
+
+---
+
 ## Running Automated Feature Tests
 
 Execute the Pest test suite:

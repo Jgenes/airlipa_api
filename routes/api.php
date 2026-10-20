@@ -169,6 +169,10 @@ Route::prefix('v1')->group(function () {
                 Route::get('{id}', [ProtectedPaymentController::class, 'show']);
                 Route::post('{id}/pay', [ProtectedPaymentController::class, 'initiatePayment']);
                 Route::get('{id}/deposit-qr', [ProtectedPaymentController::class, 'depositQr']);
+                Route::post('{id}/delivery-qr', [ProtectedPaymentController::class, 'issueDeliveryQr'])
+                    ->middleware('throttle:10,1');
+                Route::post('{id}/confirm-delivery', [ProtectedPaymentController::class, 'confirmDelivery'])
+                    ->middleware('throttle:10,1');
                 Route::get('{id}/status-recovery', [ProtectedPaymentController::class, 'statusRecovery']);
                 Route::get('{id}/payment-status', [ProtectedPaymentController::class, 'statusRecovery']);
                 Route::post('{id}/simulate-provider-callback', [ProtectedPaymentController::class, 'simulateProviderCallback']);

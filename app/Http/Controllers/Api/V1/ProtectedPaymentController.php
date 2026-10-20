@@ -113,6 +113,47 @@ class ProtectedPaymentController extends Controller
     }
 
     /**
+     * Issue a single-use delivery confirmation QR code (Module 5).
+     * POST /api/v1/protected-payments/{id}/delivery-qr
+     */
+    public function issueDeliveryQr(Request $request, string $id): JsonResponse
+    {
+        $payment = $this->resolveAuthorizedPayment($request, $id);
+
+        $result = app(\App\Services\DeliveryConfirmationService::class)->issue($payment, $request->user());
+
+        return ApiResponse::success(
+            message: 'Delivery confirmation code issued. Show it to the buyer at handover.',
+            data: $result,
+            nextStep: 'buyer_scans_and_confirms',
+            status: 201
+        );
+    }
+
+    /**
+     * Buyer confirms delivery by scanning/entering the single-use code (Module 5).
+     * POST /api/v1/protected-payments/{id}/confirm-delivery
+     */
+    public function confirmDelivery(Request $request, string $id): JsonResponse
+    {
+        $validated = $request->validate([
+            'delivery_token' => ['required', 'string', 'max:120'],
+        ]);
+
+        $payment = $this->resolveAuthorizedPayment($request, $id);
+
+        $updated = app(\App\Services\DeliveryConfirmationService::class)
+            ->confirm($payment, $request->user(), (string) $validated['delivery_token']);
+
+        return ApiResponse::success(
+            message: 'Delivery confirmed. Funds stay protected until you accept the goods or the inspection window closes.',
+            data: new ProtectedPaymentResource($updated),
+            nextStep: 'accept_goods_or_open_dispute',
+            status: 200
+        );
+    }
+
+    /**
      * Initiate a payment intent and provider collection attempt (FR-007, FR-008, BPA-CH-03).
      * POST /api/v1/protected-payments/{id}/pay
      */

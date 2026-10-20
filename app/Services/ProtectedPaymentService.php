@@ -46,7 +46,8 @@ class ProtectedPaymentService
         protected PaymentProviderAdapterInterface $providerAdapter,
         protected LedgerService $ledgerService,
         protected ?RiskEngineService $riskEngine = null,
-        protected ?NotificationOutboxService $outboxService = null
+        protected ?NotificationOutboxService $outboxService = null,
+        protected ?SubledgerService $subledgerService = null
     ) {}
 
     /**
@@ -830,13 +831,45 @@ class ProtectedPaymentService
                 'disputed_amount_minor' => $newDisputed,
             ]);
 
-            // 2. Execute release instruction with licensed provider
+            // 2. Reserve in the escrow subledger BEFORE calling the provider so the
+            //    balance cannot be released twice while the disbursement is in flight.
+            $contract = $payment->escrowContract;
+            $reservationKey = "relres:{$payment->protected_payment_id}:{$idempotencyKey}";
+
+            if ($contract && $this->subledgerService) {
+                $this->subledgerService->reserveRelease(
+                    contract: $contract,
+                    payment: $payment,
+                    amountMinor: $releasePrincipalMinor,
+                    baseKey: $reservationKey,
+                    milestoneId: $milestone ? (int) $milestone->id : null,
+                    actorUserId: $actor?->id
+                );
+            }
+
             $providerResult = $this->providerAdapter->executeRelease(
                 payment: $payment,
                 capability: $capability,
                 amountMinor: $releasePrincipalMinor,
                 idempotencyKey: $idempotencyKey
             );
+
+            // 2b. Provider rejected the disbursement: reverse the reservation, keep funds in escrow.
+            if (($providerResult['executed'] ?? false) === false) {
+                if ($contract && $this->subledgerService) {
+                    $this->subledgerService->reverseReleaseReservation(
+                        contract: $contract,
+                        payment: $payment,
+                        amountMinor: $releasePrincipalMinor,
+                        baseKey: $reservationKey,
+                        milestoneId: $milestone ? (int) $milestone->id : null
+                    );
+                }
+
+                throw new \DomainException(
+                    'Provider rejected the release instruction (' . ($providerResult['raw_status'] ?? 'UNKNOWN') . '). Funds remain protected; retry later.'
+                );
+            }
 
             // 3. Calculate proportional merchant fee, merchant tax, and deferred buyer fee recognition
             $originalPrincipal = max(1, (int) $payment->principal_amount_minor);
@@ -890,6 +923,21 @@ class ProtectedPaymentService
                     'status' => $msReleased >= (int) $milestone->amount_minor ? 'RELEASED' : 'PARTIALLY_RELEASED',
                     'completed_at' => $msReleased >= (int) $milestone->amount_minor ? now() : null,
                 ]);
+            }
+
+            if ($contract && $this->subledgerService) {
+                $this->subledgerService->confirmRelease(
+                    contract: $contract,
+                    amountMinor: $releasePrincipalMinor,
+                    baseKey: $reservationKey,
+                    milestoneId: $milestone ? (int) $milestone->id : null,
+                    meta: [
+                        'ledger_journal_id' => $journal->id,
+                        'reference' => (string) ($contract->reference ?? $payment->reference),
+                        'actor_user_id' => $actor?->id,
+                        'currency' => $payment->currency,
+                    ]
+                );
             }
 
             $freshPayment = $payment->fresh(['feeQuote', 'merchant.businessProfile', 'buyer', 'milestones']);

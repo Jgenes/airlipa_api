@@ -34,6 +34,10 @@ return [
 
     'webhook_replay_window_seconds' => (int) env('AIRLIPA_WEBHOOK_REPLAY_WINDOW', 300),
 
+    'payout_step_up_threshold_minor' => (int) env('PAYOUT_STEP_UP_THRESHOLD_MINOR', 100000000), // 1,000,000.00 TZS
+    'payout_name_match_required' => (bool) env('PAYOUT_NAME_MATCH_REQUIRED', true),
+    'payout_max_retries' => (int) env('PAYOUT_MAX_RETRIES', 3),
+    'delivery_confirmation_token_ttl_minutes' => (int) env('DELIVERY_CONFIRMATION_TTL_MINUTES', 1440),
     'dual_control_threshold_minor' => (int) env('AIRLIPA_DUAL_CONTROL_THRESHOLD_MINOR', 500000000), // 5,000,000.00 TZS in minor units (cents)
 
     /*

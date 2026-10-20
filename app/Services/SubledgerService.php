@@ -502,4 +502,254 @@ class SubledgerService
 
         return $written;
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Phase 3 - Release, payout settlement and reversal operations
+    |--------------------------------------------------------------------------
+    | Reservation (RELEASE_REQUESTED) is subledger-only: money does not leave
+    | the pooled account until the provider confirms the disbursement, but the
+    | contract's available balance drops immediately so it can never be spent
+    | twice while a payout is in flight.
+    */
+
+    public function accountFor(EscrowContract $contract): ?ContractSubledgerAccount
+    {
+        return ContractSubledgerAccount::where('escrow_contract_id', $contract->id)->first();
+    }
+
+    /**
+     * RELEASE_REQUESTED: move funds available -> pending_release and, for the
+     * seller, entitled -> held (money owed but not yet paid out).
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function reserveRelease(
+        EscrowContract $contract,
+        ProtectedPayment $payment,
+        int $amountMinor,
+        string $baseKey,
+        ?int $milestoneId = null,
+        ?int $actorUserId = null
+    ): void {
+        DB::transaction(function () use ($contract, $payment, $amountMinor, $baseKey, $milestoneId, $actorUserId): void {
+            $meta = [
+                'ledger_journal_id' => null,
+                'reference' => (string) ($payment->escrowContract?->reference ?? $payment->reference),
+                'reason_code' => 'RELEASE_REQUESTED',
+                'actor_user_id' => $actorUserId,
+                'currency' => $payment->currency,
+            ];
+
+            $account = $this->accountFor($contract);
+
+            if ($account) {
+                $this->transferBucket(
+                    SubledgerType::Contract,
+                    $account,
+                    'available_minor',
+                    'pending_release_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':contract']
+                );
+            }
+
+            if ($milestoneId) {
+                $milestoneAccount = MilestoneSubledgerAccount::where('milestone_id', $milestoneId)->first();
+
+                if ($milestoneAccount) {
+                    $this->transferBucket(
+                        SubledgerType::Milestone,
+                        $milestoneAccount,
+                        'available_minor',
+                        'pending_release_minor',
+                        $amountMinor,
+                        $meta + ['idempotency_key' => $baseKey . ':milestone']
+                    );
+                }
+            }
+
+            $sellerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->merchant_id)
+                ->where('role', 'SELLER')
+                ->first();
+
+            if ($sellerAccount && (int) $sellerAccount->entitled_minor >= $amountMinor) {
+                $this->transferBucket(
+                    SubledgerType::Party,
+                    $sellerAccount,
+                    'entitled_minor',
+                    'held_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':party']
+                );
+            }
+        });
+    }
+
+    /**
+     * Provider confirmed the release: pending_release -> released on contract
+     * and milestone subledgers.
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function confirmRelease(
+        EscrowContract $contract,
+        int $amountMinor,
+        string $baseKey,
+        ?int $milestoneId = null,
+        array $meta = []
+    ): void {
+        DB::transaction(function () use ($contract, $amountMinor, $baseKey, $milestoneId, $meta): void {
+            $meta += ['reason_code' => 'RELEASE_CONFIRMED'];
+
+            $account = $this->accountFor($contract);
+
+            if ($account) {
+                $this->transferBucket(
+                    SubledgerType::Contract,
+                    $account,
+                    'pending_release_minor',
+                    'released_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':contract']
+                );
+            }
+
+            if ($milestoneId) {
+                $milestoneAccount = MilestoneSubledgerAccount::where('milestone_id', $milestoneId)->first();
+
+                if ($milestoneAccount) {
+                    $this->transferBucket(
+                        SubledgerType::Milestone,
+                        $milestoneAccount,
+                        'pending_release_minor',
+                        'released_minor',
+                        $amountMinor,
+                        $meta + ['idempotency_key' => $baseKey . ':milestone']
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Release failed at the provider: put the money straight back to available
+     * (pending_release -> available) and the seller back to entitled.
+     * Reversal-only - never edit prior entries.
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function reverseReleaseReservation(
+        EscrowContract $contract,
+        ProtectedPayment $payment,
+        int $amountMinor,
+        string $baseKey,
+        ?int $milestoneId = null,
+        array $meta = []
+    ): void {
+        DB::transaction(function () use ($contract, $payment, $amountMinor, $baseKey, $milestoneId, $meta): void {
+            $meta += ['reason_code' => 'RELEASE_FAILED_REVERSAL'];
+
+            $account = $this->accountFor($contract);
+
+            if ($account) {
+                $this->transferBucket(
+                    SubledgerType::Contract,
+                    $account,
+                    'pending_release_minor',
+                    'available_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':contract']
+                );
+            }
+
+            if ($milestoneId) {
+                $milestoneAccount = MilestoneSubledgerAccount::where('milestone_id', $milestoneId)->first();
+
+                if ($milestoneAccount) {
+                    $this->transferBucket(
+                        SubledgerType::Milestone,
+                        $milestoneAccount,
+                        'pending_release_minor',
+                        'available_minor',
+                        $amountMinor,
+                        $meta + ['idempotency_key' => $baseKey . ':milestone']
+                    );
+                }
+            }
+
+            $sellerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->merchant_id)
+                ->where('role', 'SELLER')
+                ->first();
+
+            if ($sellerAccount && (int) $sellerAccount->held_minor >= $amountMinor) {
+                $this->transferBucket(
+                    SubledgerType::Party,
+                    $sellerAccount,
+                    'held_minor',
+                    'entitled_minor',
+                    $amountMinor,
+                    $meta + ['idempotency_key' => $baseKey . ':party']
+                );
+            }
+        });
+    }
+
+    /**
+     * Payout settled: seller held -> paid_out.
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function confirmPayoutSettlement(EscrowContract $contract, ProtectedPayment $payment, int $amountMinor, string $baseKey, array $meta = []): void
+    {
+        DB::transaction(function () use ($contract, $payment, $amountMinor, $baseKey, $meta): void {
+            $sellerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->merchant_id)
+                ->where('role', 'SELLER')
+                ->first();
+
+            if (!$sellerAccount || (int) $sellerAccount->held_minor < $amountMinor) {
+                return;
+            }
+
+            $this->transferBucket(
+                SubledgerType::Party,
+                $sellerAccount,
+                'held_minor',
+                'paid_out_minor',
+                $amountMinor,
+                $meta + ['reason_code' => 'PAYOUT_SUCCEEDED', 'idempotency_key' => $baseKey . ':party']
+            );
+        });
+    }
+
+    /**
+     * Payout failed: seller paid_out -> held.
+     *
+     * @param array<string, mixed> $meta
+     */
+    public function reversePayoutSettlement(EscrowContract $contract, ProtectedPayment $payment, int $amountMinor, string $baseKey, array $meta = []): void
+    {
+        DB::transaction(function () use ($contract, $payment, $amountMinor, $baseKey, $meta): void {
+            $sellerAccount = PartySubledgerAccount::where('escrow_contract_id', $contract->id)
+                ->where('user_id', $payment->merchant_id)
+                ->where('role', 'SELLER')
+                ->first();
+
+            if (!$sellerAccount || (int) $sellerAccount->paid_out_minor < $amountMinor) {
+                return;
+            }
+
+            $this->transferBucket(
+                SubledgerType::Party,
+                $sellerAccount,
+                'paid_out_minor',
+                'held_minor',
+                $amountMinor,
+                $meta + ['reason_code' => 'PAYOUT_FAILED_REVERSAL', 'idempotency_key' => $baseKey . ':party']
+            );
+        });
+    }
 }
