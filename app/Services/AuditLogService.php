@@ -4,19 +4,26 @@ namespace App\Services;
 
 use App\Models\AuditLog;
 use App\Models\User;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Request;
+use Throwable;
 
 class AuditLogService
 {
     /**
      * Record an audit log entry with masked PII and request context.
      *
+     * A failed write must not take an otherwise valid request down with it: an
+     * unimplemented column or an unavailable audit storage previously turned
+     * every login into a 500. The failure is reported at critical level with
+     * the full event context, so the record is still recoverable from the logs.
+     *
      * @param string $event
      * @param User|int|null $user
      * @param array<string, mixed> $metadata
-     * @return AuditLog
+     * @return AuditLog|null
      */
-    public static function log(string $event, User|int|null $user = null, array $metadata = []): AuditLog
+    public static function log(string $event, User|int|null $user = null, array $metadata = []): ?AuditLog
     {
         $userId = $user instanceof User ? $user->id : $user;
         $sanitizedMetadata = self::sanitizeMetadata($metadata);
@@ -41,17 +48,30 @@ class AuditLogService
 
         $entryHash = hash('sha256', (string) $canonicalPayload);
 
-        return AuditLog::create([
-            'user_id' => $userId,
-            'event' => $event,
-            'ip_address' => $ipAddress,
-            'user_agent' => $userAgent,
-            'correlation_id' => is_string($correlationId) ? substr($correlationId, 0, 64) : null,
-            'metadata' => $sanitizedMetadata,
-            'previous_hash' => $previousHash,
-            'entry_hash' => $entryHash,
-            'created_at' => $createdAt,
-        ]);
+        try {
+            return AuditLog::create([
+                'user_id' => $userId,
+                'event' => $event,
+                'ip_address' => $ipAddress,
+                'user_agent' => $userAgent,
+                'correlation_id' => is_string($correlationId) ? substr($correlationId, 0, 64) : null,
+                'metadata' => $sanitizedMetadata,
+                'previous_hash' => $previousHash,
+                'entry_hash' => $entryHash,
+                'created_at' => $createdAt,
+            ]);
+        } catch (Throwable $e) {
+            Log::critical('Audit log write failed; the request continued without an audit record.', [
+                'event' => $event,
+                'user_id' => $userId,
+                'ip_address' => $ipAddress,
+                'correlation_id' => is_string($correlationId) ? substr($correlationId, 0, 64) : null,
+                'metadata' => $sanitizedMetadata,
+                'exception' => $e,
+            ]);
+
+            return null;
+        }
     }
 
     /**

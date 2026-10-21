@@ -4,6 +4,7 @@ use App\Models\AuditLog;
 use App\Models\User;
 use App\Services\AuditLogService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\Sanctum;
 
 uses(RefreshDatabase::class);
@@ -62,4 +63,24 @@ test('audit log masks sensitive PII and excludes secrets', function () {
         ->and(str_contains($metadata['phone'], '*'))->toBeTrue()
         ->and($metadata['nida'])->not->toBe('19900101123450000001')
         ->and(str_contains($metadata['nida'], '*'))->toBeTrue();
+});
+
+test('a failed audit log write does not break the request that triggered it', function () {
+    $user = User::factory()->create();
+
+    Log::spy();
+
+    // Metadata that cannot be JSON encoded forces the insert to fail before it
+    // reaches the database — the same class of failure a stale `audit_logs`
+    // schema produced on the login endpoint.
+    $log = AuditLogService::log('login_success', $user, ['note' => "\xB1\x31"]);
+
+    expect($log)->toBeNull()
+        ->and(AuditLog::query()->count())->toBe(0);
+
+    Log::shouldHaveReceived('critical')
+        ->once()
+        ->withArgs(fn (string $message, array $context): bool => str_contains($message, 'Audit log write failed')
+            && $context['event'] === 'login_success'
+            && $context['user_id'] === $user->id);
 });
